@@ -1,0 +1,16 @@
+{
+  "name": "opencode-gemini-cli-provider",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Use the locally authenticated Gemini CLI as a selectable OpenCode provider",
+  "exports": {
+    ".": "./src/index.js"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
