@@ -1,8 +1,8 @@
 # OpenCode Gemini CLI Provider
 
-This plugin adds a **Gemini CLI Agent** provider and the selectable model `gemini-cli/default` to OpenCode's `/models`
-list. When you select it, OpenCode sends the session's text conversation to the installed Gemini CLI, which generates
-the response. By default, Gemini CLI chooses which Gemini model to use.
+This plugin adds a **Gemini** provider and the selectable model `gemini-cli/default` to OpenCode's `/models` list. When
+you select it, OpenCode sends the session's text conversation to the installed Gemini CLI, which generates the
+response. By default, Gemini CLI chooses which Gemini model to use.
 
 This is a model/provider integration, **not** a `gemini_task` tool. Gemini CLI keeps its existing authentication and
 runs its own agent/tool loop; this plugin does not read or copy Gemini credentials.
@@ -32,7 +32,7 @@ OpenCode watches configuration files and loads plugin changes without requiring 
 ## Use
 
 After the plugin loads, choose a model in `/models`. The provider runs Gemini CLI from the current project directory
-and honors the CLI's existing login and policy configuration.
+and uses the CLI's existing login.
 
 - `gemini-cli/gemini-3.8-flash` selects **Gemini 3.8 Flash**.
 - `gemini-cli/gemini-3.1-pro-preview` selects **Gemini 3.1 Pro Preview**.
@@ -42,10 +42,19 @@ and honors the CLI's existing login and policy configuration.
 Other Gemini CLI model IDs can be added under `providers.gemini-cli.models` in OpenCode configuration, with the model ID
 as the map key and `modelID` value.
 
+## Effort and variants
+
+OpenCode effort variants are not exposed by this provider yet. Gemini CLI has its own model-generation configuration,
+including thinking settings. This adapter does not translate OpenCode variant choices into Gemini CLI settings, so set
+thinking effort through Gemini CLI configuration. Those generation settings continue to apply to plugin requests.
+
 ## Important behavior
 
 - Gemini CLI's own tools perform agent actions. OpenCode's tool permissions, tool-call UI, and approval flow do **not**
-  govern those actions. Configure Gemini CLI's approval/policy mode accordingly.
+  govern those actions. For calls started by this plugin, Gemini CLI is explicitly launched with
+  `--approval-mode=yolo`, so it auto-approves tool actions. This is scoped to plugin-launched processes; it does not
+  change your `~/.gemini/settings.json` or normal Gemini CLI sessions. Other Gemini CLI security policies may still
+  block an action.
 - Each OpenCode model request starts a headless Gemini CLI invocation and sends the available text transcript. This
   adapter does not preserve a persistent Gemini CLI session between requests.
 - Text prompts are supported. Media/file prompt parts currently fail explicitly rather than being dropped.

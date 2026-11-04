@@ -35,13 +35,16 @@ Gemini SDK is not published as an npm package, this adapter uses the supported C
 depending on Gemini CLI internals.
 
 This does not reproduce Claude Agent's private Core integration. Gemini CLI runs a separate agent/tool loop, so
-OpenCode tool permissions/approval UI do not govern those operations; each model call starts a fresh CLI invocation;
-media inputs and incremental token streaming are not supported yet. These limitations are user-visible in the README.
-No live model request is authorized or needed for offline verification.
+OpenCode tool permissions/approval UI do not govern those operations. The owner chose to launch plugin-owned Gemini CLI
+processes with `--approval-mode=yolo`; this is scoped to plugin requests and does not edit Gemini CLI settings. Each
+model call starts a fresh CLI invocation; media inputs and incremental token streaming are not supported yet. These
+limitations and the YOLO behavior are user-visible in the README. No live model request is authorized or needed for
+offline verification.
 
 ## Verification
 
 - `npm test`: 11 tests pass.
+- The fake Gemini executable test confirms plugin-launched requests include `--approval-mode=yolo`.
 - OpenCode V2.2.5 `opencode models` lists `gemini-cli/default` after loading the plugin.
 - `opencode run --model gemini-cli/default` completed end-to-end against a temporary fake Gemini CLI and returned its
   fixture response. No Gemini authentication or live model request was used.

@@ -227,7 +227,7 @@ export async function runGeminiTask({ task, cwd, model, signal }) {
     throw new Error("Task must not be empty.")
   }
   const selectedModel = validateModel(model)
-  const args = ["--prompt", CLI_PROMPT, "--output-format", "json"]
+  const args = ["--prompt", CLI_PROMPT, "--output-format", "json", "--approval-mode=yolo"]
   if (selectedModel) args.push("--model", selectedModel)
   if (signal?.aborted) throw new Error("Gemini task was cancelled.")
 

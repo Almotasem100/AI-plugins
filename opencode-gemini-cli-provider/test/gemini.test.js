@@ -63,14 +63,17 @@ test("validateModel accepts a model ID and rejects option-like input", () => {
   assert.throws(() => validateModel("--yolo"), /Model must be a Gemini CLI model ID/)
 })
 
-test("the resolved Gemini process receives task input and uses the session directory", async () => {
+test("plugin launches Gemini in the project directory with YOLO approval mode", async () => {
   const { temporaryRoot, commandDirectory, projectDirectory } = await createFakeProject()
   const originalPath = process.env.PATH
   const cliSource = [
     "let task = ''",
     "process.stdin.setEncoding('utf8')",
     "process.stdin.on('data', chunk => task += chunk)",
-    "process.stdin.on('end', () => process.stdout.write(JSON.stringify({response: JSON.stringify({task, cwd: process.cwd()})})))",
+    "process.stdin.on('end', () => {",
+    "  const result = { task, cwd: process.cwd(), args: process.argv.slice(2) }",
+    "  process.stdout.write(JSON.stringify({ response: JSON.stringify(result) }))",
+    "})",
   ].join("\n")
 
   try {
@@ -82,10 +85,10 @@ test("the resolved Gemini process receives task input and uses the session direc
       task: "inspect this project",
       cwd: projectDirectory,
     })
-    assert.deepEqual(JSON.parse(response), {
-      task: "inspect this project",
-      cwd: projectDirectory,
-    })
+    const cliResult = JSON.parse(response)
+    assert.equal(cliResult.task, "inspect this project")
+    assert.equal(cliResult.cwd, projectDirectory)
+    assert.ok(cliResult.args.includes("--approval-mode=yolo"))
   } finally {
     process.env.PATH = originalPath
     await rm(temporaryRoot, { recursive: true, force: true })

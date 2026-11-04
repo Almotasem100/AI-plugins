@@ -23,7 +23,7 @@ function providerDefinition() {
   return {
     info: {
       ...Provider.Info.empty(PROVIDER_ID),
-      name: "Gemini CLI Agent",
+      name: "Gemini",
       activation: "enabled",
       package: PROVIDER_PACKAGE,
     },
