@@ -45,8 +45,7 @@ function mountDuck() {
   }
   let duckComponent
   runInNewContext(client, { window: browser })
-  // Keep the SVG regression: dragging must use browser bounds, not rely on
-  // offsetWidth/offsetHeight, even though the sprite now uses an HTML wrapper.
+  // The drag implementation measures the visible fixed wrapper via its bounds.
   const element = {
     getBoundingClientRect: () => ({ left: 100, top: 150, width: 88, height: 102 }),
   }
@@ -97,7 +96,7 @@ assert.equal(duck.duckProps().style, undefined, "right click must not start drag
 duck.start()
 assert.deepEqual(position(), [100, 150], "grabbing must preserve the current position")
 duck.emit("pointermove")
-assert.deepEqual(position(), [300, 350], "SVG drag must produce finite coordinates and preserve the grab offset")
+assert.deepEqual(position(), [300, 350], "Dragging must produce finite coordinates and preserve the grab offset")
 duck.emit("pointermove", { pointerId: 2 })
 assert.deepEqual(position(), [300, 350], "another pointer must not move the duck")
 duck.start({ pointerId: 2, clientX: 500, clientY: 500 })

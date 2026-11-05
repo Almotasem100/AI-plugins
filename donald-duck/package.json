@@ -14,9 +14,9 @@
     ".": "./index.js",
     "./client": "./client.js",
     "./locale/*.json": "./locale/*.json",
-    "./icon": "./icon.svg"
+    "./icon": "./assets/donald-duck-icon.png"
   },
-  "files": ["index.js", "client.js", "client.source.js", "scripts/build.js", "test/*.js", "assets/donald-duck.png", "cordis.patch.yml", "locale/*.json", "icon.svg"],
+  "files": ["index.js", "client.js", "client.source.js", "scripts/build.js", "test/*.js", "assets/donald-duck.png", "assets/donald-duck-icon.png", "cordis.patch.yml", "locale/*.json"],
   "dsh": {
     "bundle": { "patch": "./cordis.patch.yml" },
     "client": {

@@ -17,7 +17,7 @@ Install this directory as a local bundle through ZadLoop's Plugin Manager. The p
 
 ## Artwork and build
 
-Replace `assets/donald-duck.png` with a transparent PNG, then run `npm run build` from this directory. This embeds the image in `client.js` so no separate image server is needed. Edit `client.source.js`, not the generated `client.js`. Restart ZadLoop to load updated code if it is not refreshed live. The image is contained without stretching or cropping; individual body parts are not animated.
+Replace `assets/donald-duck.png` with a transparent PNG and update `assets/donald-duck-icon.png` with a matching square crop, then run `npm run build` from this directory. The build embeds the character image in `client.js` so no separate image server is needed. Edit `client.source.js`, not the generated `client.js`. Restart ZadLoop to load updated code if it is not refreshed live. The image is contained without stretching or cropping; individual body parts are not animated. The Plugin Manager icon is a square head-and-beak crop of the same transparent artwork.
 
 The artwork is user-supplied, not original plugin artwork; obtain appropriate rights before distributing it.
 
