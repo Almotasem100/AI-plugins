@@ -24,8 +24,9 @@ through `/models`), not delegating a one-off task to a tool or subagent.
 - Gemini CLI's SDK source exists at `google-gemini/gemini-cli` tag `v0.66.0`, but
   `@google/gemini-cli-sdk` is not published in npm (npm registry returned 404), and its source package depends on the
   monorepo-local `@google/gemini-cli-core` package.
-- Current code is a `gemini_task` tool bridge in `src/index.js` and `src/gemini.js`; it is not a model provider. Existing
-  tests cover that bridge only.
+- Current code registers a selectable provider in `src/index.js`, adapts the AI SDK V3 language-model interface in
+  `src/provider.js`, and invokes Gemini CLI through `src/gemini.js`. Offline tests cover the adapter and CLI boundary.
+- The plugin requires Node.js 20.3.0 or later because cancellation combines signals with `AbortSignal.any`.
 
 ## Design decision and limitations
 
@@ -43,8 +44,13 @@ offline verification.
 
 ## Verification
 
-- `npm test`: 11 tests pass.
-- The fake Gemini executable test confirms plugin-launched requests include `--approval-mode=yolo`.
+- Current review: `npm test` passes all 12 offline tests on Windows with Node.js 22.19.0, including a real subprocess
+  launch failure for a missing working directory. The fake CLI tests also verify YOLO arguments and cancellation.
+- Current review: `node --check` passes for all three source files and both test files.
+- POSIX execution and Node.js 20.3.0 minimum-version verification were not run during this review.
+
+Earlier integration verification (not rerun during this review):
+
 - OpenCode V2.2.5 `opencode models` lists `gemini-cli/default` after loading the plugin.
 - `opencode run --model gemini-cli/default` completed end-to-end against a temporary fake Gemini CLI and returned its
   fixture response. No Gemini authentication or live model request was used.

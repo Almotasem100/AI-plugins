@@ -79,6 +79,10 @@ function trackClose(child) {
 }
 
 async function stopProcessTree(child, closeState) {
+  if (!child.pid) {
+    if (!closeState.complete) await closeState.promise
+    return
+  }
   terminate(child)
   if (process.platform === "win32") {
     if (!closeState.complete) await closeState.promise

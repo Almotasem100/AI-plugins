@@ -10,7 +10,7 @@ runs its own agent/tool loop; this plugin does not read or copy Gemini credentia
 ## Requirements
 
 - OpenCode 2.2.5 or later
-- Node.js 20 or later
+- Node.js 20.3.0 or later
 - Gemini CLI installed and authenticated (`gemini --version` / `gemini`)
 
 ## Install locally
@@ -41,6 +41,21 @@ and uses the CLI's existing login.
 
 Other Gemini CLI model IDs can be added under `providers.gemini-cli.models` in OpenCode configuration, with the model ID
 as the map key and `modelID` value.
+
+## Use Gemini as a subagent
+
+The provider makes Gemini selectable as a model; OpenCode also needs an agent definition to dispatch it as a named
+subagent. Copy [`agents/gemini.md`](agents/gemini.md) into the `agents/` directory of your OpenCode config:
+
+- Windows: `%USERPROFILE%\.config\opencode\agents\gemini.md`
+- macOS/Linux: `~/.config/opencode/agents/gemini.md` (or the equivalent under `XDG_CONFIG_HOME`)
+
+Create the `agents/` directory if it does not exist, then start a new session and ask OpenCode to use the **Gemini**
+subagent, for example: “Ask the Gemini subagent to summarize the project README.”
+
+**Security note:** Gemini CLI runs its own tool loop in YOLO mode for plugin requests. Its actions are not governed by
+OpenCode's per-tool permissions or approval UI; review the YOLO behavior under [Important behavior](#important-behavior)
+before enabling this subagent.
 
 ## Effort and variants
 

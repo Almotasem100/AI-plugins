@@ -118,6 +118,23 @@ test("completed CLI failures surface after the process closes", async () => {
   }
 })
 
+test("a missing working directory preserves the subprocess launch error", async () => {
+  const { temporaryRoot, commandDirectory, projectDirectory } = await createFakeProject()
+  const originalPath = process.env.PATH
+
+  try {
+    await createFakeGemini(commandDirectory, "process.stdout.write(JSON.stringify({ response: 'unexpected launch' }))")
+    process.env.PATH = `${commandDirectory}${delimiter}${originalPath ?? ""}`
+    await assert.rejects(
+      runGeminiTask({ task: "fail before the fake CLI starts", cwd: join(projectDirectory, "missing") }),
+      { code: "ENOENT" },
+    )
+  } finally {
+    process.env.PATH = originalPath
+    await rm(temporaryRoot, { recursive: true, force: true })
+  }
+})
+
 test("cancellation waits until Gemini's process tree has stopped", async () => {
   const { temporaryRoot, commandDirectory, projectDirectory } = await createFakeProject()
   const readyFile = join(temporaryRoot, "ready")
