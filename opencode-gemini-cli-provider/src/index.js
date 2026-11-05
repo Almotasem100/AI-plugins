@@ -28,7 +28,6 @@ function providerDefinition() {
       package: PROVIDER_PACKAGE,
     },
     models: [
-      modelDefinition("default", "Gemini CLI (default)"),
       modelDefinition("gemini-3.8-flash", "Gemini 3.8 Flash"),
       modelDefinition("gemini-3.1-pro-preview", "Gemini 3.1 Pro Preview"),
     ],

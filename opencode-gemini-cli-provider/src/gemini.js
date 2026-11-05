@@ -159,15 +159,17 @@ async function resolveGeminiCommand(cwd) {
   throw new Error("Gemini CLI was not found on PATH outside the current project directory.")
 }
 
-function collectStdout(stream, child) {
+function collectStdout(stream) {
   return new Promise((resolve, reject) => {
     let text = ""
     let bytes = 0
+    let failed = false
     stream.setEncoding("utf8")
     stream.on("data", (chunk) => {
+      if (failed) return
       bytes += Buffer.byteLength(chunk)
       if (bytes > MAX_OUTPUT_BYTES) {
-        terminate(child)
+        failed = true
         reject(new Error("Gemini CLI output exceeded the 16 MiB limit."))
         return
       }
@@ -221,7 +223,7 @@ async function readGeminiProcess(child, task, signal) {
     signal,
     timeoutSignal,
     executionSignal: signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal,
-    stdoutPromise: collectStdout(child.stdout, child),
+    stdoutPromise: collectStdout(child.stdout),
     stderrPromise: collectStderr(child.stderr),
   })
 }

@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Gemini CLI Provider",
+    "description": "Use Gemini 3.8 Flash and Gemini 3.1 Pro Preview through ZadLoop model selection and delegation."
+  }
+}

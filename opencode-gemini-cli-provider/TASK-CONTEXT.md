@@ -44,19 +44,22 @@ offline verification.
 
 ## Verification
 
-- Current review: `npm test` passes all 12 offline tests on Windows with Node.js 22.19.0, including a real subprocess
-  launch failure for a missing working directory. The fake CLI tests also verify YOLO arguments and cancellation.
+- Current review: `npm test` passes all 13 offline tests on Windows with Node.js 22.19.0, including a real subprocess
+  launch failure for a missing working directory and process-tree shutdown after output above the 16 MiB limit. The fake
+  CLI tests also verify YOLO arguments and cancellation.
 - Current review: `node --check` passes for all three source files and both test files.
 - POSIX execution and Node.js 20.3.0 minimum-version verification were not run during this review.
 
 Earlier integration verification (not rerun during this review):
 
-- OpenCode V2.2.5 `opencode models` lists `gemini-cli/default` after loading the plugin.
+- OpenCode V2.2.5 `opencode models` listed `gemini-cli/default` after loading the plugin (historical; this model was
+  subsequently removed from the plugin inventory).
 - `opencode run --model gemini-cli/default` completed end-to-end against a temporary fake Gemini CLI and returned its
-  fixture response. No Gemini authentication or live model request was used.
+  fixture response (historical). No Gemini authentication or live model request was used.
 - The user's global `opencode.json` plugin path remains unchanged.
-- The built-in selectable model inventory includes Gemini CLI default, Gemini 3.8 Flash, and Gemini 3.1 Pro Preview;
-  explicit model entries pass their model ID to the CLI.
+- At the time of that integration check, the inventory included Gemini CLI default, Gemini 3.8 Flash, and Gemini 3.1 Pro
+  Preview; explicit model entries passed their model ID to the CLI. The current built-in inventory is the two explicit
+  models only.
 
 ## References
 

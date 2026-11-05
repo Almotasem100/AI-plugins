@@ -118,6 +118,59 @@ test("completed CLI failures surface after the process closes", async () => {
   }
 })
 
+test("oversized CLI output stops a still-running CLI and its process tree", { timeout: 15_000 }, async () => {
+  const { temporaryRoot, commandDirectory, projectDirectory } = await createFakeProject()
+  const readyFile = join(temporaryRoot, "overflow-ready")
+  const heartbeatFile = join(temporaryRoot, "overflow-heartbeat")
+  const originalPath = process.env.PATH
+  const originalReadyFile = process.env.GEMINI_TEST_READY_FILE
+  const originalHeartbeatFile = process.env.GEMINI_TEST_HEARTBEAT_FILE
+  // The heartbeat child keeps running and only starts the oversized write once it
+  // exists, so a passing assertion proves the whole process tree stopped.
+  const cliSource = [
+    "const fs = require('node:fs')",
+    "const {spawn} = require('node:child_process')",
+    "process.on('SIGTERM', () => process.exit(0))",
+    "const childSource = `const fs=require('node:fs');process.on('SIGTERM',()=>{});let count=0;const beat=()=>fs.writeFileSync(process.env.GEMINI_TEST_HEARTBEAT_FILE,String(++count));beat();setInterval(beat,20)`",
+    "spawn(process.execPath, ['-e', childSource], {stdio: 'ignore'})",
+    "const heartbeat = process.env.GEMINI_TEST_HEARTBEAT_FILE",
+    "const timer = setInterval(() => {",
+    "  if (!fs.existsSync(heartbeat)) return",
+    "  clearInterval(timer)",
+    "  fs.writeFileSync(process.env.GEMINI_TEST_READY_FILE, 'ready')",
+    "  const chunk = 'x'.repeat(1024 * 1024)",
+    "  let remaining = 17",
+    "  function writeNext() {",
+    "    if (remaining-- === 0) return",
+    "    process.stdout.write(chunk, writeNext)",
+    "  }",
+    "  writeNext()",
+    "}, 10)",
+  ].join("\n")
+  let execution
+
+  try {
+    await createFakeGemini(commandDirectory, cliSource)
+    process.env.PATH = `${commandDirectory}${delimiter}${originalPath ?? ""}`
+    process.env.GEMINI_TEST_READY_FILE = readyFile
+    process.env.GEMINI_TEST_HEARTBEAT_FILE = heartbeatFile
+    execution = runGeminiTask({ task: "produce too much output", cwd: projectDirectory })
+    await waitForFile(readyFile)
+    await assert.rejects(execution, /exceeded the 16 MiB limit/)
+    const stoppedAt = await readFile(heartbeatFile, "utf8")
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    assert.equal(await readFile(heartbeatFile, "utf8"), stoppedAt)
+  } finally {
+    await execution?.catch(() => {})
+    process.env.PATH = originalPath
+    if (originalReadyFile === undefined) delete process.env.GEMINI_TEST_READY_FILE
+    else process.env.GEMINI_TEST_READY_FILE = originalReadyFile
+    if (originalHeartbeatFile === undefined) delete process.env.GEMINI_TEST_HEARTBEAT_FILE
+    else process.env.GEMINI_TEST_HEARTBEAT_FILE = originalHeartbeatFile
+    await rm(temporaryRoot, { recursive: true, force: true })
+  }
+})
+
 test("a missing working directory preserves the subprocess launch error", async () => {
   const { temporaryRoot, commandDirectory, projectDirectory } = await createFakeProject()
   const originalPath = process.env.PATH

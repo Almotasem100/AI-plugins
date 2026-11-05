@@ -1,0 +1,16 @@
+- insert:
+    - id: zadloop-gemini-cli-provider
+      name: '@local/zadloop-gemini-cli-provider'
+      inject: [llm, subprocess, sessions, workingDirectory, subagents]
+    - id: zadloop-gemini-subagent-tool
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: gemini
+        toolName: gemini_flash_subagent
+        maxDepth: 1
+    - id: zadloop-gemini-pro-subagent-tool
+      name: '@deepseek-ai/dsh-tool-subagent'
+      config:
+        provider: gemini-pro
+        toolName: gemini_pro_subagent
+        maxDepth: 1

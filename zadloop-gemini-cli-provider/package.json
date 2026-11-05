@@ -1,0 +1,20 @@
+{
+  "name": "@local/zadloop-gemini-cli-provider",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=20.3.0" },
+  "scripts": {
+    "test": "node test/smoke.js"
+  },
+  "exports": {
+    ".": "./src/index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": ["src/*.js", "test/*.js", "README.md", "cordis.patch.yml", "locale/*.json", "icon.svg"],
+  "peerDependencies": {
+    "@deepseek-ai/dsh-llm": "0.2.1-rc.2"
+  },
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+}
