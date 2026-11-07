@@ -26,3 +26,4 @@ requirements, setup, and verification limits.
 ## Vendor records
 
 - [dsh-sidebar-browser-cdp](vendor/dsh-sidebar-browser-cdp/README.md) — provenance and pinned upstream commit for the profile-installed DSH sidebar browser plugin.
+- [opencode-anthropic-login-via-cli](vendor/opencode-anthropic-login-via-cli/README.md) — provenance and pinned upstream commit for the globally configured OpenCode Anthropic authentication plugin.
