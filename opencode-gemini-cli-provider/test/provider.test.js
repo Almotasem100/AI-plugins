@@ -59,9 +59,30 @@ test("stream adapter emits a complete AI SDK V3 text response", async () => {
   assert.equal(events[2].delta, "Streamed after completion")
 })
 
-test("unsupported prompt content fails instead of being silently dropped", () => {
+test("non-image prompt content fails instead of being silently dropped", () => {
   assert.throws(
-    () => renderGeminiPrompt([{ role: "user", content: [{ type: "file", data: "AA==", mediaType: "image/png" }] }]),
-    /does not support file prompt content/,
+    () => renderGeminiPrompt([{ role: "user", content: [{ type: "file", data: "AA==", mediaType: "application/pdf" }] }]),
+    /does not support application\/pdf/,
   )
+})
+
+test("screenshots are forwarded as image data with their conversation position", async () => {
+  let received
+  const model = createGeminiLanguageModel({ modelID: "gemini-3.8-flash", cwd: "C:/project", runImage: async (input) => {
+    received = input
+    return "image received"
+  } })
+  const result = await model.doGenerate({ prompt: [{ role: "user", content: [
+    { type: "text", text: "Describe this" },
+    { type: "file", mediaType: "image/png", data: new Uint8Array([1, 2, 3]) },
+  ] }] })
+  assert.equal(result.content[0].text, "image received")
+  assert.deepEqual(received.images, [{ type: "image", mimeType: "image/png", data: "AQID" }])
+  assert.match(received.task, /Attached image 1/)
+})
+
+test("image URLs are rejected rather than being sent as base64", () => {
+  assert.throws(() => renderGeminiPrompt([{ role: "user", content: [
+    { type: "file", mediaType: "image/png", data: new URL("https://example.com/image.png") },
+  ] }]), /requires image bytes or base64/)
 })

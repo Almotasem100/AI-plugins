@@ -1,7 +1,7 @@
 # OpenCode Gemini CLI Provider
 
 This plugin adds a **Gemini** provider with two selectable models to OpenCode's `/models` list. OpenCode sends the
-session's text conversation to the installed Gemini CLI, which generates the response using the selected model.
+session's conversation to the installed Gemini CLI, which generates the response using the selected model.
 
 This is a model/provider integration, **not** a `gemini_task` tool. Gemini CLI keeps its existing authentication and
 runs its own agent/tool loop; this plugin does not read or copy Gemini credentials.
@@ -67,9 +67,10 @@ thinking effort through Gemini CLI configuration. Those generation settings cont
   `--approval-mode=yolo`, so it auto-approves tool actions. This is scoped to plugin-launched processes; it does not
   change your `~/.gemini/settings.json` or normal Gemini CLI sessions. Other Gemini CLI security policies may still
   block an action.
-- Each OpenCode model request starts a headless Gemini CLI invocation and sends the available text transcript. This
+- Each OpenCode model request starts a Gemini CLI invocation and sends the available text transcript. This
   adapter does not preserve a persistent Gemini CLI session between requests.
-- Text prompts are supported. Media/file prompt parts currently fail explicitly rather than being dropped.
+- PNG, JPEG, WebP, and GIF image attachments are sent through Gemini CLI's ACP image input. Image URLs and other
+  file types fail explicitly rather than being dropped. Image requests require a Gemini CLI version with ACP image support.
 - Output is delivered after the Gemini CLI invocation completes; the OpenCode stream adapter does not provide
   incremental token streaming yet.
 - Requests time out after 15 minutes. Cancellation stops the Gemini CLI process tree.

@@ -19,7 +19,7 @@ through `/models`), not delegating a one-off task to a tool or subagent.
   `ctx.aisdk.hook("sdk"/"language")`, which can contribute a selectable model and runtime implementation.
 - OpenCode's built-in Claude Agent provider is a core plugin (`opencode.provider.claude-agent`) using private Core
   services. That exact internal integration cannot be copied by this standalone plugin.
-- The installed Gemini CLI is 0.66.0. It supports headless `--prompt` with `--output-format stream-json` and ACP via
+- The installed Gemini CLI was observed as 0.67.0. It supports headless `--prompt` with `--output-format stream-json` and ACP via
   `--acp`; these use the CLI rather than reading its credentials.
 - Gemini CLI's SDK source exists at `google-gemini/gemini-cli` tag `v0.66.0`, but
   `@google/gemini-cli-sdk` is not published in npm (npm registry returned 404), and its source package depends on the
@@ -38,9 +38,9 @@ depending on Gemini CLI internals.
 This does not reproduce Claude Agent's private Core integration. Gemini CLI runs a separate agent/tool loop, so
 OpenCode tool permissions/approval UI do not govern those operations. The owner chose to launch plugin-owned Gemini CLI
 processes with `--approval-mode=yolo`; this is scoped to plugin requests and does not edit Gemini CLI settings. Each
-model call starts a fresh CLI invocation; media inputs and incremental token streaming are not supported yet. These
-limitations and the YOLO behavior are user-visible in the README. No live model request is authorized or needed for
-offline verification.
+model call starts a fresh CLI invocation. Image requests use ACP with inline image blocks; incremental token streaming
+remains unsupported. Image support is covered offline with a fake ACP executable, not a live Gemini request. The YOLO
+behavior remains user-visible in the README. Live model requests require separate authorization.
 
 ## Verification
 

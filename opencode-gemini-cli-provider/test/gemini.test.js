@@ -3,7 +3,8 @@ import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/
 import { delimiter, join } from "node:path"
 import { tmpdir } from "node:os"
 import test from "node:test"
-import { parseGeminiOutput, runGeminiTask, validateModel } from "../src/gemini.js"
+import { parseGeminiOutput, runGeminiImageTask, runGeminiTask, validateModel } from "../src/gemini.js"
+import { createGeminiLanguageModel } from "../src/provider.js"
 
 async function createFakeGemini(commandDirectory, cliSource) {
   if (process.platform === "win32") {
@@ -43,6 +44,63 @@ async function waitForFile(file) {
 
 test("parseGeminiOutput returns the CLI's final response", () => {
   assert.equal(parseGeminiOutput(JSON.stringify({ response: "done", stats: {} })), "done")
+})
+
+test("image requests complete an ACP exchange with the CLI", async () => {
+  const { temporaryRoot, commandDirectory, projectDirectory } = await createFakeProject()
+  const originalPath = process.env.PATH
+  const cliSource = `
+    const readline = require('node:readline')
+    const lines = readline.createInterface({ input: process.stdin })
+    const reply = (id, result) => process.stdout.write(JSON.stringify({jsonrpc:'2.0',id,result})+'\\n')
+    lines.on('line', line => {
+      const m = JSON.parse(line)
+      if (m.method === 'initialize') reply(m.id, {protocolVersion:1,agentCapabilities:{promptCapabilities:{image:true}}})
+      if (m.method === 'session/new') reply(m.id, {sessionId:'test'})
+      if (m.method === 'session/prompt') {
+        const image = m.params.prompt.find(p => p.type === 'image')
+        const text = image.mimeType + ':' + image.data
+        process.stdout.write(JSON.stringify({jsonrpc:'2.0',method:'session/update',params:{sessionId:'test',update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text}}}})+'\\n')
+        reply(m.id, {stopReason:'end_turn'})
+      }
+    })`
+  try {
+    await createFakeGemini(commandDirectory, cliSource)
+    process.env.PATH = `${commandDirectory}${delimiter}${originalPath ?? ""}`
+    const model = createGeminiLanguageModel({ modelID: "gemini-3.8-flash", cwd: projectDirectory })
+    const result = await model.doGenerate({ prompt: [{ role: "user", content: [
+      { type: "text", text: "describe" }, { type: "file", mediaType: "image/png", data: new Uint8Array([1, 2, 3]) },
+    ] }] })
+    assert.equal(result.content[0].text, "image/png:AQID")
+  } finally {
+    process.env.PATH = originalPath
+    await rm(temporaryRoot, { recursive: true, force: true })
+  }
+})
+
+test("cancelling an image request stops the ACP process", async () => {
+  const { temporaryRoot, commandDirectory, projectDirectory } = await createFakeProject()
+  const readyFile = join(temporaryRoot, "image-ready")
+  const originalPath = process.env.PATH
+  const originalReadyFile = process.env.GEMINI_TEST_READY_FILE
+  const controller = new AbortController()
+  let execution
+  try {
+    await createFakeGemini(commandDirectory, "require('node:fs').writeFileSync(process.env.GEMINI_TEST_READY_FILE, 'ready'); process.stdin.resume()")
+    process.env.PATH = `${commandDirectory}${delimiter}${originalPath ?? ""}`
+    process.env.GEMINI_TEST_READY_FILE = readyFile
+    execution = runGeminiImageTask({ task: "describe", images: [], cwd: projectDirectory, signal: controller.signal })
+    await waitForFile(readyFile)
+    controller.abort()
+    await assert.rejects(execution, /cancelled/)
+  } finally {
+    controller.abort()
+    await execution?.catch(() => {})
+    process.env.PATH = originalPath
+    if (originalReadyFile === undefined) delete process.env.GEMINI_TEST_READY_FILE
+    else process.env.GEMINI_TEST_READY_FILE = originalReadyFile
+    await rm(temporaryRoot, { recursive: true, force: true })
+  }
 })
 
 test("parseGeminiOutput surfaces structured CLI errors", () => {

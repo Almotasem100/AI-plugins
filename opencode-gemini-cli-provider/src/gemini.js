@@ -3,6 +3,7 @@ import { once } from "node:events"
 import { access, constants } from "node:fs/promises"
 import { delimiter, isAbsolute, join, relative, resolve, sep } from "node:path"
 import { homedir } from "node:os"
+import { createInterface } from "node:readline"
 
 const CLI_PROMPT = "Complete the task provided on standard input. Treat it as the user's request."
 const MAX_OUTPUT_BYTES = 16 * 1024 * 1024
@@ -247,4 +248,82 @@ export async function runGeminiTask({ task, cwd, model, signal }) {
     windowsHide: true,
   })
   return readGeminiProcess(child, task, signal)
+}
+
+// Images use ACP because headless JSON output accepts only a text prompt.
+export async function runGeminiImageTask({ task, images, cwd, model, signal }) {
+  const selectedModel = validateModel(model)
+  if (signal?.aborted) throw new Error("Gemini task was cancelled.")
+  const cli = await resolveGeminiCommand(cwd)
+  const args = ["--acp", "--approval-mode=yolo"]
+  if (selectedModel) args.push("--model", selectedModel)
+  const child = spawn(cli.command, [...cli.args, ...args], {
+    cwd, detached: process.platform !== "win32", env: process.env, shell: false,
+    stdio: ["pipe", "pipe", "pipe"], windowsHide: true,
+  })
+  const closeState = trackClose(child)
+  const stderrPromise = collectStderr(child.stderr)
+  const timeoutSignal = AbortSignal.timeout(DEFAULT_TIMEOUT_MS)
+  const executionSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal
+  const lines = createInterface({ input: child.stdout, crlfDelay: Infinity })
+  const pending = new Map()
+  let nextID = 0
+  let responseText = ""
+  let responseBytes = 0
+  let failure
+  const fail = (error) => {
+    if (failure) return
+    failure = error
+    for (const entry of pending.values()) entry.reject(error)
+    pending.clear()
+  }
+  const onAbort = () => fail(new Error(signal?.aborted ? "Gemini task was cancelled." : `Gemini CLI did not finish within ${DEFAULT_TIMEOUT_MS} ms.`))
+  executionSignal.addEventListener("abort", onAbort, { once: true })
+  child.on("error", fail)
+  child.stdin.on("error", fail)
+  child.on("close", () => fail(new Error("Gemini CLI ACP process closed unexpectedly.")))
+  lines.on("line", (line) => {
+    try {
+      const message = JSON.parse(line)
+      if (message.method === "session/update") {
+        const update = message.params?.update
+        if (update?.sessionUpdate === "agent_message_chunk" && update.content?.type === "text") {
+          responseBytes += Buffer.byteLength(update.content.text)
+          if (responseBytes > MAX_OUTPUT_BYTES) throw new Error("Gemini CLI output exceeded the 16 MiB limit.")
+          responseText += update.content.text
+        }
+      } else if (message.method && message.id !== undefined) {
+        // Never auto-approve a request we cannot display through OpenCode.
+        child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "Client method unavailable" } })}\n`)
+      } else if (message.id !== undefined && pending.has(message.id)) {
+        const entry = pending.get(message.id)
+        pending.delete(message.id)
+        if (message.error) entry.reject(new Error(message.error.message || "Gemini CLI ACP request failed."))
+        else entry.resolve(message.result)
+      }
+    } catch (error) { fail(error) }
+  })
+  const request = (method, params) => new Promise((resolve, reject) => {
+    if (failure) return reject(failure)
+    const id = ++nextID
+    pending.set(id, { resolve, reject })
+    child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id, method, params })}\n`)
+  })
+  try {
+    if (executionSignal.aborted) onAbort()
+    const init = await request("initialize", { protocolVersion: 1, clientCapabilities: {} })
+    if (init?.protocolVersion !== 1 || init.agentCapabilities?.promptCapabilities?.image !== true) {
+      throw new Error("Gemini CLI ACP does not support image input.")
+    }
+    const session = await request("session/new", { cwd: resolve(cwd), mcpServers: [] })
+    if (typeof session?.sessionId !== "string") throw new Error("Gemini CLI ACP did not return a session ID.")
+    const result = await request("session/prompt", { sessionId: session.sessionId, prompt: [{ type: "text", text: task }, ...images] })
+    if (result?.stopReason !== "end_turn") throw new Error(`Gemini CLI ACP stopped: ${result?.stopReason ?? "unknown"}.`)
+    return responseText
+  } finally {
+    executionSignal.removeEventListener("abort", onAbort)
+    lines.close()
+    await stopProcessTree(child, closeState)
+    await stderrPromise.catch(() => {})
+  }
 }

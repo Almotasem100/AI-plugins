@@ -13,7 +13,7 @@ function modelDefinition(id, name, modelID = id) {
     modelID,
     capabilities: {
       tools: false,
-      input: ["text"],
+      input: ["text", "image"],
       output: ["text"],
     },
   }
