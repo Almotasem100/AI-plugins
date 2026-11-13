@@ -1,4 +1,5 @@
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
+import { runAcpImageTask } from "./acp.js"
 
 const CLI_PROMPT = "Complete the task provided on standard input. Treat it as the user's request."
 const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000
@@ -84,6 +85,43 @@ async function resolveWindowsGemini(subprocess, cwd, signal) {
   const node = await subprocess.resolveExecutable("node.exe", undefined, signal)
   const entryPoint = join(dirname(shim), "node_modules", "@google", "gemini-cli", "bundle", "gemini.js")
   return { command: node, args: [entryPoint] }
+}
+
+export async function runGeminiImageTask({ subprocess, task, images, cwd, model, signal }) {
+  if (typeof task !== "string" || task.trim() === "") throw new Error("Task must not be empty.")
+  if (!Array.isArray(images) || images.length === 0 || images.some((image) =>
+    image?.type !== "image" || typeof image.data !== "string" || !image.data || typeof image.mimeType !== "string" || !image.mimeType)) {
+    throw new Error("Images must be ACP image content blocks.")
+  }
+  const selectedModel = validateModel(model)
+  if (signal?.aborted) throw new Error("Gemini task was cancelled.")
+  const timeoutSignal = AbortSignal.timeout(DEFAULT_TIMEOUT_MS)
+  const executionSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal
+  try {
+    const platform = (await subprocess.terminalEnvironment(executionSignal)).platform
+    const command = platform === "windows"
+      ? await resolveWindowsGemini(subprocess, cwd, executionSignal)
+      : { command: await subprocess.resolveExecutable("gemini", undefined, executionSignal), args: [] }
+    if (executionSignal.aborted) throw abortError(signal, timeoutSignal)
+    const handle = subprocess.spawn({
+      argv: [command.command, ...command.args, "--acp", "--approval-mode=yolo", "--model", selectedModel],
+      cwd,
+      stdio: { stdin: "pipe", stdout: "pipe", stderr: "pipe" },
+      graceMs: 3000,
+      signal: executionSignal,
+    })
+    const response = await runAcpImageTask({ handle, task, images, cwd, signal: executionSignal })
+    const aborted = abortError(signal, timeoutSignal)
+    if (aborted) throw aborted
+    return response
+  } catch (error) {
+    const aborted = abortError(signal, timeoutSignal)
+    if (!aborted) throw error
+    if (error instanceof Error && error.message !== aborted.message && error.message !== "Gemini task was cancelled.") {
+      aborted.message += ` ${error.message}`
+    }
+    throw aborted
+  }
 }
 
 export async function runGeminiTask({ subprocess, task, cwd, model, signal }) {

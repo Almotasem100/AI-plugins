@@ -4,7 +4,7 @@ Adds `gemini-cli` as a selectable ZadLoop model provider with exactly two model 
 
 ## Requirements
 
-- ZadLoop with the `llm`, `subprocess`, `sessions`, `workingDirectory`, and `subagents` services enabled
+- ZadLoop with the `llm`, `subprocess`, `sessions`, `workingDirectory`, `subagents`, and `attachments` services enabled
 - Node.js 20.3 or later in the host runtime
 - Gemini CLI installed and authenticated
 
@@ -15,8 +15,9 @@ Install this directory as a local bundle through ZadLoop's Plugin Manager. The b
 ## Important behavior
 
 - Gemini CLI is launched with `--approval-mode=yolo`. Its own tool actions run in a separate agent loop under your OS user account and are **not** governed by ZadLoop's per-tool approval or workspace sandbox UI. Treat them as unrestricted host actions; use only where you accept that trust boundary.
-- Each model call starts a new Gemini CLI process; no persistent Gemini session or incremental response streaming is provided.
-- This adapter advertises text-only input, does not report token usage, and does not translate ZadLoop reasoning-effort settings.
+- Each model call starts a new Gemini CLI process; no persistent Gemini session or incremental response streaming is provided. ACP client requests that would require a ZadLoop-side response, including permission requests, are rejected rather than approved automatically.
+- The model provider accepts ZadLoop image attachments (PNG, JPEG, WebP, and GIF), subject to ZadLoop's attachment limits and normalization. Image-bearing calls use Gemini CLI ACP and require an installed CLI that advertises ACP image support; unsupported images or ACP capability failures return an error. Text-only calls continue to use headless JSON mode. Some Gemini CLI versions report certain interrupted streams as a normal ACP completion; an empty response is rejected, but a partial response cannot always be distinguished from a complete one.
+- The adapter does not report token usage or translate ZadLoop reasoning-effort settings. The one-shot delegation tools remain text-only.
 - The model catalog contains only `gemini-3.8-flash` and `gemini-3.1-pro-preview`; every call passes its selected model ID explicitly to Gemini CLI. Delegation uses `gemini_flash_subagent` for Flash or `gemini_pro_subagent` for Pro Preview.
 - On Windows, the system `where.exe` locates the npm CLI shim and the plugin launches Gemini's bundled JavaScript entry point through `node.exe`, avoiding shell interpolation of the task. Model IDs are strictly validated and the task itself is sent over stdin.
 

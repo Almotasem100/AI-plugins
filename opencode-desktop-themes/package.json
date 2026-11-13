@@ -1,0 +1,11 @@
+{
+  "name": "local-desktop-themes",
+  "version": "1.0.0",
+  "private": true,
+  "exports": {
+    "./gui-experimental": "./gui-experimental.cjs"
+  },
+  "scripts": {
+    "test": "node --test"
+  }
+}

@@ -5,7 +5,7 @@
   "type": "module",
   "engines": { "node": ">=20.3.0" },
   "scripts": {
-    "test": "node test/smoke.js"
+    "test": "node test/smoke.js && node --experimental-loader ./test/llm-loader.js --test test/adapter.test.js"
   },
   "exports": {
     ".": "./src/index.js",
@@ -14,7 +14,7 @@
   },
   "files": ["src/*.js", "test/*.js", "README.md", "cordis.patch.yml", "locale/*.json", "icon.svg"],
   "peerDependencies": {
-    "@deepseek-ai/dsh-llm": "0.2.1-rc.2"
+    "@deepseek-ai/dsh-llm": "0.2.1-rc.2 || 0.2.2-rc.1"
   },
   "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
 }

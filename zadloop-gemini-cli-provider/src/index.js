@@ -2,13 +2,14 @@ import { GeminiCliAdapter } from "./adapter.js"
 import { createGeminiSubagent } from "./delegation.js"
 import { GEMINI_MODELS } from "./gemini.js"
 
-export const inject = ["llm", "subprocess", "sessions", "workingDirectory", "subagents"]
+export const inject = ["llm", "subprocess", "sessions", "workingDirectory", "subagents", "attachments"]
 
 export function apply(ctx) {
   const adapterDisposer = ctx.llm.registerAdapter(["gemini-cli"], new GeminiCliAdapter({
     subprocess: ctx.subprocess,
     sessions: ctx.sessions,
     workingDirectory: ctx.workingDirectory,
+    attachments: ctx.attachments,
   }))
 
   const subagentDisposers = []
