@@ -12,6 +12,7 @@ export const GEMINI_MODELS = [
 ]
 
 export function validateModel(model) {
+  if (model === "default") return GEMINI_MODELS[0].id
   const supportedModel = GEMINI_MODELS.find((candidate) => candidate.id === model)
   if (!supportedModel) throw new Error(`Unsupported Gemini CLI model ID: ${model}`)
   return supportedModel.id

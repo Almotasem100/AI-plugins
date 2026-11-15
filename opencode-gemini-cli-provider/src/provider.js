@@ -61,7 +61,7 @@ function generateOptions({ modelID, cwd, run, runImage }) {
       task,
       ...(images.length ? { images } : {}),
       cwd,
-      model: modelID === "default" || modelID === "auto" ? undefined : modelID,
+      model: modelID === "default" ? "gemini-3.8-flash" : modelID === "auto" ? undefined : modelID,
       signal: options.abortSignal,
     })
     return {

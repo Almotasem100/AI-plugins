@@ -16,11 +16,12 @@ export class GeminiCliAdapter extends LlmAdapter {
   }
 
   listModels(provider) {
-    return Promise.resolve(GEMINI_MODELS.map(({ id, name }) => ({ provider, id, name, inputModalities: ["text", "image"] })))
+    const models = [{ id: "default", name: `${GEMINI_MODELS[0].name} (Default)` }, ...GEMINI_MODELS]
+    return Promise.resolve(models.map(({ id, name }) => ({ provider, id, name, inputModalities: ["text", "image"] })))
   }
 
   resolveModel(provider, model) {
-    const supportedModel = GEMINI_MODELS.find((candidate) => candidate.id === model)
+    const supportedModel = model === "default" ? GEMINI_MODELS[0] : GEMINI_MODELS.find((candidate) => candidate.id === model)
     if (!supportedModel) throw new Error(`Unknown Gemini CLI model: ${model}`)
     return Promise.resolve({ provider, id: model, name: supportedModel.name, inputModalities: ["text", "image"] })
   }

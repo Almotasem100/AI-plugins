@@ -19,7 +19,7 @@ assert.equal(parseGeminiOutput(JSON.stringify({ response: "ok" })), "ok")
 assert.throws(() => parseGeminiOutput("no json"), /invalid JSON/)
 assert.deepEqual(GEMINI_MODELS.map(({ id }) => id), ["gemini-3.8-flash", "gemini-3.1-pro-preview"])
 for (const model of GEMINI_MODELS) assert.equal(validateModel(model.id), model.id)
-assert.throws(() => validateModel("default"), /Unsupported Gemini CLI model ID/)
+assert.equal(validateModel("default"), "gemini-3.8-flash")
 assert.throws(() => validateModel("--yolo"), /Unsupported Gemini CLI model ID/)
 assert.throws(() => validateModel(undefined), /Unsupported Gemini CLI model ID/)
 
@@ -41,7 +41,7 @@ const subprocess = {
     }
   },
 }
-const response = await runGeminiTask({ subprocess, task: "safe fixture", cwd: "C:/project", model: "gemini-3.8-flash" })
+const response = await runGeminiTask({ subprocess, task: "safe fixture", cwd: "C:/project", model: "default" })
 assert.equal(response, "fixture answer")
 assert.equal(launch.cwd, "C:/project")
 assert.deepEqual(launch.argv.slice(1), ["--prompt", "Complete the task provided on standard input. Treat it as the user's request.", "--output-format", "json", "--approval-mode=yolo", "--model", "gemini-3.8-flash"])

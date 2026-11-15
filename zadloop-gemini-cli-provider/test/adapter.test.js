@@ -94,6 +94,15 @@ test("image request reaches Gemini over ACP and returns streamed response", { ti
   assert.notEqual(f.child.signalCode, null)
 })
 
+test("default alias is selectable and sends images to Gemini 3.8 Flash", { timeout: 5000 }, async (t) => {
+  const f = fixture(t)
+  const models = await f.adapter.listModels("gemini-cli")
+  assert.ok(models.some((entry) => entry.id === "default"))
+  assert.equal((await f.adapter.resolveModel("gemini-cli", "default")).id, "default")
+  await collect(f.adapter.stream({ ...options(new AbortController().signal), provider: "gemini-cli", model: "default" }))
+  assert.ok(f.launch.argv.includes("gemini-3.8-flash"))
+})
+
 for (const [name, version] of [
   ["empty data", { data: new Uint8Array(), mediaType: "image/png" }],
   ["unsupported MIME type", { data: bytes, mediaType: "image/svg+xml" }],

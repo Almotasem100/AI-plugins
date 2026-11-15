@@ -1,6 +1,6 @@
 # OpenCode Gemini CLI Provider
 
-This plugin adds a **Gemini** provider with two selectable models to OpenCode's `/models` list. OpenCode sends the
+This plugin adds a **Gemini** provider with two models and a default alias to OpenCode's `/models` list. OpenCode sends the
 session's conversation to the installed Gemini CLI, which generates the response using the selected model.
 
 This is a model/provider integration, **not** a `gemini_task` tool. Gemini CLI keeps its existing authentication and
@@ -35,6 +35,7 @@ and uses the CLI's existing login.
 
 - `gemini-cli/gemini-3.8-flash` selects **Gemini 3.8 Flash**.
 - `gemini-cli/gemini-3.1-pro-preview` selects **Gemini 3.1 Pro Preview**.
+- `gemini-cli/default` is an alias for **Gemini 3.8 Flash**, including for existing subagents using this ID.
 
 Other Gemini CLI model IDs can be added under `providers.gemini-cli.models` in OpenCode configuration. Each entry's
 `modelID` field carries the CLI model ID; use the same ID as the map key for readability.

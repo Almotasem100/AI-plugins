@@ -1,6 +1,6 @@
 # ZadLoop Gemini CLI Provider
 
-Adds `gemini-cli` as a selectable ZadLoop model provider with exactly two model IDs: `gemini-3.8-flash` and `gemini-3.1-pro-preview`. It also registers model-specific one-shot delegation tools: `gemini_flash_subagent` uses Flash and `gemini_pro_subagent` uses Pro Preview. Each request runs a fresh headless Gemini CLI process in the active Session's working directory and uses Gemini CLI's existing local authentication; the plugin does not read or copy credentials.
+Adds `gemini-cli` as a selectable ZadLoop model provider with two models: `gemini-3.8-flash` and `gemini-3.1-pro-preview`. The `default` model ID is an alias for Gemini 3.8 Flash. It also registers model-specific one-shot delegation tools: `gemini_flash_subagent` uses Flash and `gemini_pro_subagent` uses Pro Preview. Each request runs a fresh Gemini CLI process in the active Session's working directory and uses Gemini CLI's existing local authentication; the plugin does not read or copy credentials.
 
 ## Requirements
 
@@ -10,7 +10,7 @@ Adds `gemini-cli` as a selectable ZadLoop model provider with exactly two model 
 
 ## Install
 
-Install this directory as a local bundle through ZadLoop's Plugin Manager. The bundle registers the `gemini-cli` LLM route and the `gemini_flash_subagent` and `gemini_pro_subagent` tools. Ask ZadLoop to use the tool matching the desired model for a self-contained task; the parent receives the result through the normal subagent completion flow. Delegated work does not inherit the parent's full conversation or support follow-up messages. For ordinary model calls, choose one of the two listed model IDs in model selection.
+Install this directory as a local bundle through ZadLoop's Plugin Manager. The bundle registers the `gemini-cli` LLM route and the `gemini_flash_subagent` and `gemini_pro_subagent` tools. Ask ZadLoop to use the tool matching the desired model for a self-contained task; the parent receives the result through the normal subagent completion flow. Delegated work does not inherit the parent's full conversation or support follow-up messages. For ordinary model calls, choose a model or the Flash default alias in model selection.
 
 ## Important behavior
 
@@ -18,7 +18,7 @@ Install this directory as a local bundle through ZadLoop's Plugin Manager. The b
 - Each model call starts a new Gemini CLI process; no persistent Gemini session or incremental response streaming is provided. ACP client requests that would require a ZadLoop-side response, including permission requests, are rejected rather than approved automatically.
 - The model provider accepts ZadLoop image attachments (PNG, JPEG, WebP, and GIF), subject to ZadLoop's attachment limits and normalization. Image-bearing calls use Gemini CLI ACP and require an installed CLI that advertises ACP image support; unsupported images or ACP capability failures return an error. Text-only calls continue to use headless JSON mode. Some Gemini CLI versions report certain interrupted streams as a normal ACP completion; an empty response is rejected, but a partial response cannot always be distinguished from a complete one.
 - The adapter does not report token usage or translate ZadLoop reasoning-effort settings. The one-shot delegation tools remain text-only.
-- The model catalog contains only `gemini-3.8-flash` and `gemini-3.1-pro-preview`; every call passes its selected model ID explicitly to Gemini CLI. Delegation uses `gemini_flash_subagent` for Flash or `gemini_pro_subagent` for Pro Preview.
+- The catalog contains `gemini-3.8-flash`, `gemini-3.1-pro-preview`, and the Flash alias `default`; every call passes the concrete model ID explicitly to Gemini CLI. Delegation uses `gemini_flash_subagent` for Flash or `gemini_pro_subagent` for Pro Preview.
 - On Windows, the system `where.exe` locates the npm CLI shim and the plugin launches Gemini's bundled JavaScript entry point through `node.exe`, avoiding shell interpolation of the task. Model IDs are strictly validated and the task itself is sent over stdin.
 
 ## Verify

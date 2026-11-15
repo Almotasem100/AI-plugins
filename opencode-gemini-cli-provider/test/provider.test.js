@@ -24,7 +24,11 @@ test("renderGeminiPrompt preserves message roles and tool results", () => {
 })
 
 test("language model forwards the selected concrete model ID to Gemini CLI", async () => {
-  for (const modelID of ["gemini-3.8-flash", "gemini-3.1-pro-preview"]) {
+  for (const [modelID, expected] of [
+    ["default", "gemini-3.8-flash"],
+    ["gemini-3.8-flash", "gemini-3.8-flash"],
+    ["gemini-3.1-pro-preview", "gemini-3.1-pro-preview"],
+  ]) {
     let received
     const model = createGeminiLanguageModel({
       modelID,
@@ -38,7 +42,7 @@ test("language model forwards the selected concrete model ID to Gemini CLI", asy
     const generatedResponse = await model.doGenerate({ prompt: [{ role: "user", content: "Hello" }] })
 
     assert.equal(received.cwd, "C:/project")
-    assert.equal(received.model, modelID)
+    assert.equal(received.model, expected)
     assert.match(received.task, /"text": "Hello"/)
     assert.equal(generatedResponse.content[0].text, "The answer")
     assert.equal(generatedResponse.finishReason.unified, "stop")
