@@ -72,9 +72,45 @@ thinking effort through Gemini CLI configuration. Those generation settings cont
   adapter does not preserve a persistent Gemini CLI session between requests.
 - PNG, JPEG, WebP, and GIF image attachments are sent through Gemini CLI's ACP image input. Image URLs and other
   file types fail explicitly rather than being dropped. Image requests require a Gemini CLI version with ACP image support.
-- Output is delivered after the Gemini CLI invocation completes; the OpenCode stream adapter does not provide
-  incremental token streaming yet.
-- Requests time out after 15 minutes. Cancellation stops the Gemini CLI process tree.
+
+### Streaming and errors
+
+- Text requests use Gemini CLI's `stream-json` output and image requests use ACP updates. Assistant text is forwarded
+  to OpenCode as Gemini produces it, so the response appears while the request is still running.
+- With `stream-json`, text emitted during intermediate Gemini turns (before one of Gemini's own tool calls) is also
+  streamed. OpenCode shows that text before the final answer; it is not a separate tool card.
+- For headless `stream-json` requests, the CLI's final `result` event normally decides
+  success or failure. The known terminal `Maximum session turns exceeded` error is
+  also treated as failure, even if the CLI follows it with a successful result. Other
+  `error` events do not fail a request that ends successfully, and a nonzero exit code
+  remains a failure. Partial text followed by failure is never reported as a completed
+  response.
+- Startup, authentication, quota/rate-limit, session turn-limit, protocol, cancellation, and process failures become
+  fixed safe classifications. Raw stderr and arbitrary CLI diagnostic text are not included in user-facing errors;
+  this avoids treating regex-based redaction as a confidentiality guarantee.
+- Cumulative CLI output is limited to 16 MiB. Requests time out after 15 minutes. Cancellation, a timeout, an output
+  limit, or consumer cancellation requests Gemini CLI process-tree termination. Cleanup and child-close waits are
+  bounded; owned pipes are closed if the child does not close in time, and unconfirmed cleanup is surfaced rather
+  than treated as success. Windows descendant termination is not guaranteed, especially after the root exits.
+  `stream.cancel()` waits for the bounded cleanup outcome before resolving.
+
+ACP limitation: Gemini CLI can map some underlying failures (including token exhaustion or safety blocking) to
+`stopReason: "end_turn"`. The adapter cannot identify a hidden failure from a non-empty response when ACP reports
+only that stop reason; such a response may appear complete.
+
+### Steering and host tools
+
+Queued-message steering is not forwarded into an active Gemini turn. OpenCode delivers a message sent during a
+response only when the run reaches a step boundary, and Gemini's ACP `session/prompt` aborts an active prompt instead
+of appending to it, so this adapter cannot steer a running request. The message waits for the current Gemini turn to
+finish.
+
+A host tool bridge is not implemented. OpenCode 2.3.0 supplies `x-opencode-session-id` in model request headers, and
+the AI SDK language-model interface supplies tools plus their results on a later model step.
+Production bridging remains disabled: the installed Gemini ACP implementation merges injected MCP servers with
+Gemini's configured MCP servers, and this YOLO-launched CLI also retains native tools outside OpenCode permissions.
+The plugin has not demonstrated isolation from those bypasses, real ACP/MCP parked continuation, or production
+correlation, cancellation, and permission behavior.
 
 ## Development
 

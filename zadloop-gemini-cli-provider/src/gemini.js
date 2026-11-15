@@ -1,8 +1,17 @@
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path"
-import { runAcpImageTask } from "./acp.js"
+import { streamAcpImageTask } from "./acp.js"
+import {
+  geminiFailure,
+  geminiOutputLimitFailure,
+  geminiProcessFailure,
+  geminiProtocolFailure,
+  geminiStartupFailure,
+} from "./errors.js"
+import { readJsonLines } from "./json-lines.js"
 
 const CLI_PROMPT = "Complete the task provided on standard input. Treat it as the user's request."
 const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000
+const CLEANUP_TIMEOUT_MS = 5000
 const MAX_OUTPUT_BYTES = 16 * 1024 * 1024
 const MAX_ERROR_BYTES = 4 * 1024
 
@@ -18,28 +27,11 @@ export function validateModel(model) {
   return supportedModel.id
 }
 
-export function parseGeminiOutput(stdout, stderr = "") {
-  let result
-  try {
-    result = JSON.parse(stdout)
-  } catch {
-    throw new Error(`Gemini CLI returned invalid JSON.${stderr.trim() ? ` ${stderr.trim().slice(-MAX_ERROR_BYTES)}` : ""}`)
-  }
-  if (result?.error) {
-    const message = typeof result.error === "string" ? result.error : result.error.message
-    throw new Error(message || "Gemini CLI reported an error.")
-  }
-  if (typeof result?.response !== "string") {
-    throw new Error("Gemini CLI JSON output did not contain a response string.")
-  }
-  return result.response
-}
-
 function readOutput(handle, stream, maxBytes) {
   const output = handle.collected[stream]?.readFrom(0)
   if (!output) return ""
   if (output.lossy || output.nextOffset > maxBytes) {
-    throw new Error(`Gemini CLI ${stream} exceeded the ${maxBytes} byte output limit.`)
+    throw geminiOutputLimitFailure(stream, maxBytes)
   }
   return output.text
 }
@@ -54,7 +46,64 @@ function isInside(directory, parent) {
   return pathFromParent === "" || (pathFromParent !== ".." && !pathFromParent.startsWith(`..${sep}`) && !isAbsolute(pathFromParent))
 }
 
-async function runLookup(subprocess, argv, cwd, signal) {
+async function awaitWithAbort(operation, signal, getAbortError) {
+  if (signal.aborted) throw getAbortError()
+  let onAbort
+  const aborted = new Promise((_, reject) => {
+    onAbort = () => reject(getAbortError())
+    signal.addEventListener("abort", onAbort, { once: true })
+  })
+  try {
+    const result = await Promise.race([Promise.resolve().then(operation), aborted])
+    if (signal.aborted) throw getAbortError()
+    return result
+  } finally {
+    signal.removeEventListener("abort", onAbort)
+  }
+}
+
+function createTerminationRequest(getHandle) {
+  let terminationRequested = false
+  let terminationFailed = false
+  return () => {
+    const handle = getHandle()
+    if (!handle || terminationRequested) return !terminationFailed
+    terminationRequested = true
+    try {
+      handle.terminate()
+    } catch {
+      terminationFailed = true
+    }
+    return !terminationFailed
+  }
+}
+
+async function lookupOutcome(handle, signal, getAbortError) {
+  const outcome = await awaitWithAbort(
+    () => handle.done.then((value) => ({ value }), (error) => ({ error })),
+    signal,
+    getAbortError,
+  )
+  try {
+    await awaitWithAbort(() => handle.waitForExit(signal), signal, getAbortError)
+  } catch (error) {
+    if (outcome.error) throw outcome.error
+    throw error
+  }
+  if (outcome.error) throw outcome.error
+  return outcome.value
+}
+
+async function terminateCancelledLookup(handle, requestTermination, primary) {
+  try {
+    await terminateHandle(handle, requestTermination)
+  } catch (cleanupError) {
+    throw failed(primary, cleanupError)
+  }
+  throw primary
+}
+
+async function runLookup(subprocess, argv, cwd, signal, getAbortError) {
   const handle = subprocess.spawn({
     argv,
     cwd,
@@ -62,112 +111,311 @@ async function runLookup(subprocess, argv, cwd, signal) {
     graceMs: 3000,
     signal,
   })
-  let outcome
+  const requestTermination = createTerminationRequest(() => handle)
+
   try {
-    outcome = await handle.done
-  } finally {
-    await handle.waitForExit()
-  }
-  return {
-    outcome,
-    stdout: readOutput(handle, "stdout", 4096),
-    stderr: readOutput(handle, "stderr", MAX_ERROR_BYTES),
+    const outcome = await lookupOutcome(handle, signal, getAbortError)
+    return { outcome, stdout: readOutput(handle, "stdout", 4096), stderr: readOutput(handle, "stderr", MAX_ERROR_BYTES) }
+  } catch (error) {
+    if (!signal.aborted) throw error
+    const abortError = getAbortError()
+    const primary = error instanceof Error && error.message !== abortError.message
+      ? error
+      : abortError
+    await terminateCancelledLookup(handle, requestTermination, primary)
   }
 }
 
-async function resolveWindowsGemini(subprocess, cwd, signal) {
+async function resolveWindowsGemini(subprocess, cwd, signal, getAbortError) {
   const where = await subprocess.resolveExecutable("where.exe", undefined, signal)
-  const lookup = await runLookup(subprocess, [where, "gemini.cmd"], cwd, signal)
+  const lookup = await runLookup(subprocess, [where, "gemini.cmd"], cwd, signal, getAbortError)
   const projectDirectory = resolve(cwd)
   const shim = lookup.stdout.split(/\r?\n/).map((path) => path.trim()).find((path) => path && !isInside(dirname(path), projectDirectory))
   if (lookup.outcome.exitCode !== 0 || !shim) {
-    throw new Error(`Gemini CLI npm shim was not found outside the project directory.${lookup.stderr.trim() ? ` ${lookup.stderr.trim()}` : ""}`)
+    throw geminiStartupFailure()
   }
   const node = await subprocess.resolveExecutable("node.exe", undefined, signal)
   const entryPoint = join(dirname(shim), "node_modules", "@google", "gemini-cli", "bundle", "gemini.js")
   return { command: node, args: [entryPoint] }
 }
 
-export async function runGeminiImageTask({ subprocess, task, images, cwd, model, signal }) {
-  if (typeof task !== "string" || task.trim() === "") throw new Error("Task must not be empty.")
-  if (!Array.isArray(images) || images.length === 0 || images.some((image) =>
-    image?.type !== "image" || typeof image.data !== "string" || !image.data || typeof image.mimeType !== "string" || !image.mimeType)) {
-    throw new Error("Images must be ACP image content blocks.")
-  }
-  const selectedModel = validateModel(model)
-  if (signal?.aborted) throw new Error("Gemini task was cancelled.")
-  const timeoutSignal = AbortSignal.timeout(DEFAULT_TIMEOUT_MS)
-  const executionSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal
-  try {
-    const platform = (await subprocess.terminalEnvironment(executionSignal)).platform
-    const command = platform === "windows"
-      ? await resolveWindowsGemini(subprocess, cwd, executionSignal)
-      : { command: await subprocess.resolveExecutable("gemini", undefined, executionSignal), args: [] }
-    if (executionSignal.aborted) throw abortError(signal, timeoutSignal)
-    const handle = subprocess.spawn({
-      argv: [command.command, ...command.args, "--acp", "--approval-mode=yolo", "--model", selectedModel],
-      cwd,
-      stdio: { stdin: "pipe", stdout: "pipe", stderr: "pipe" },
-      graceMs: 3000,
-      signal: executionSignal,
-    })
-    const response = await runAcpImageTask({ handle, task, images, cwd, signal: executionSignal })
-    const aborted = abortError(signal, timeoutSignal)
-    if (aborted) throw aborted
-    return response
-  } catch (error) {
-    const aborted = abortError(signal, timeoutSignal)
-    if (!aborted) throw error
-    if (error instanceof Error && error.message !== aborted.message && error.message !== "Gemini task was cancelled.") {
-      aborted.message += ` ${error.message}`
-    }
-    throw aborted
+async function resolveCommand(subprocess, cwd, signal, getAbortError) {
+  const platform = (await subprocess.terminalEnvironment(signal)).platform
+  return platform === "windows"
+    ? resolveWindowsGemini(subprocess, cwd, signal, getAbortError)
+    : { command: await subprocess.resolveExecutable("gemini", undefined, signal), args: [] }
+}
+
+function collectStderr(handle) {
+  let text = ""
+  let bytes = 0
+  handle.stderr?.on("data", (chunk) => {
+    const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+    if (bytes < MAX_ERROR_BYTES) text += data.subarray(0, MAX_ERROR_BYTES - bytes).toString("utf8")
+    bytes += data.length
+  })
+  handle.stderr?.on("error", () => {})
+  return () => text
+}
+
+function closeOwnedPipes(handle) {
+  if (!handle) return
+  for (const pipe of [handle.stdin, handle.stdout, handle.stderr]) {
+    if (typeof pipe?.destroy === "function") pipe.destroy()
   }
 }
 
-export async function runGeminiTask({ subprocess, task, cwd, model, signal }) {
-  if (typeof task !== "string" || task.trim() === "") throw new Error("Task must not be empty.")
-  const selectedModel = validateModel(model)
-  if (signal?.aborted) throw new Error("Gemini task was cancelled.")
-
-  const timeoutSignal = AbortSignal.timeout(DEFAULT_TIMEOUT_MS)
-  const executionSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal
+async function terminateHandle(handle, requestTermination) {
+  if (!handle) return
+  requestTermination()
+  const cleanupController = new AbortController()
+  const cleanupTimer = setTimeout(() => cleanupController.abort(), CLEANUP_TIMEOUT_MS)
+  const cleanupSignal = cleanupController.signal
+  let onTimeout
+  const timedOut = new Promise((_, reject) => {
+    onTimeout = () => reject(new Error("Gemini CLI cleanup failed."))
+    cleanupSignal.addEventListener("abort", onTimeout, { once: true })
+  })
 
   try {
-    const platform = (await subprocess.terminalEnvironment(executionSignal)).platform
-    const command = platform === "windows"
-      ? await resolveWindowsGemini(subprocess, cwd, executionSignal)
-      : { command: await subprocess.resolveExecutable("gemini", undefined, executionSignal), args: [] }
-    const geminiArgs = ["--prompt", CLI_PROMPT, "--output-format", "json", "--approval-mode=yolo", "--model", selectedModel]
-    const argv = [command.command, ...command.args, ...geminiArgs]
-
-    const handle = subprocess.spawn({
-      argv,
-      cwd,
-      stdio: {
-        stdin: { data: task },
-        stdout: { maxBytes: MAX_OUTPUT_BYTES },
-        stderr: { maxBytes: MAX_ERROR_BYTES },
-      },
-      graceMs: 3000,
-      signal: executionSignal,
-    })
-    let outcome
-    try {
-      outcome = await handle.done
-    } finally {
-      await handle.waitForExit()
-    }
-    const aborted = abortError(signal, timeoutSignal)
-    if (aborted) throw aborted
-    const stderr = readOutput(handle, "stderr", MAX_ERROR_BYTES)
-    if (outcome.exitCode !== 0) {
-      throw new Error(`Gemini CLI exited with code ${outcome.exitCode}.${stderr.trim() ? ` ${stderr.trim()}` : ""}`)
-    }
-    return parseGeminiOutput(readOutput(handle, "stdout", MAX_OUTPUT_BYTES), stderr)
-  } catch (error) {
-    const aborted = abortError(signal, timeoutSignal)
-    if (aborted) throw aborted
-    throw error
+    const waits = Promise.all([
+      handle.done.catch(() => {}),
+      handle.waitForExit(cleanupSignal),
+    ])
+    await Promise.race([waits, timedOut])
+    if (!requestTermination()) throw new Error("Gemini CLI cleanup failed.")
+  } catch {
+    closeOwnedPipes(handle)
+    throw new Error("Gemini CLI cleanup failed.")
+  } finally {
+    clearTimeout(cleanupTimer)
+    cleanupSignal.removeEventListener("abort", onTimeout)
   }
+}
+
+async function waitForOutcome(outcome, executionSignal, signal, timeoutSignal) {
+  if (executionSignal.aborted) throw abortError(signal, timeoutSignal)
+  let onAbort
+  const aborted = new Promise((_, reject) => {
+    onAbort = () => reject(abortError(signal, timeoutSignal))
+    executionSignal.addEventListener("abort", onAbort, { once: true })
+  })
+  try {
+    return await Promise.race([outcome, aborted])
+  } finally {
+    executionSignal.removeEventListener("abort", onAbort)
+  }
+}
+
+function failed(primary, cleanupError) {
+  if (!cleanupError) return primary
+  const cleanup = new Error("Gemini CLI cleanup failed.")
+  return new AggregateError([primary, cleanup], `${primary.message} Gemini CLI cleanup also failed.`)
+}
+
+/**
+ * Run one managed Gemini process. The body owns protocol handling; this
+ * wrapper owns abort handling, process termination, and cleanup reporting so
+ * text and ACP paths cannot drift on cancellation.
+ */
+async function* runManagedTask({ subprocess, signal, createSpec, body }) {
+  const timeoutSignal = AbortSignal.timeout(DEFAULT_TIMEOUT_MS)
+  const executionSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal
+  let handle
+  let failure
+  const onAbort = () => {
+    closeOwnedPipes(handle)
+    requestTermination()
+  }
+  const requestTermination = createTerminationRequest(() => handle)
+  executionSignal.addEventListener("abort", onAbort, { once: true })
+
+  try {
+    const spec = await createSpec(executionSignal, () => abortError(signal, timeoutSignal))
+    if (executionSignal.aborted) throw abortError(signal, timeoutSignal)
+    try {
+      handle = subprocess.spawn({ ...spec, graceMs: 3000, signal: executionSignal })
+    } catch {
+      throw geminiStartupFailure()
+    }
+    if (executionSignal.aborted) {
+      onAbort()
+      throw abortError(signal, timeoutSignal)
+    }
+    yield* body({ handle, signal, executionSignal, timeoutSignal })
+  } catch (error) {
+    const interrupted = error === executionSignal.reason
+      || error?.name === "AbortError"
+      || error?.code === "ERR_STREAM_PREMATURE_CLOSE"
+    failure = executionSignal.aborted && interrupted
+      ? abortError(signal, timeoutSignal)
+      : error instanceof Error ? error : new Error(String(error))
+  } finally {
+    executionSignal.removeEventListener("abort", onAbort)
+    try {
+      await terminateHandle(handle, requestTermination)
+    } catch {
+      const cleanupError = new Error("Gemini CLI cleanup failed.")
+      const primary = failure ?? abortError(signal, timeoutSignal)
+      if (primary) throw failed(primary, cleanupError)
+      throw cleanupError
+    }
+  }
+  if (failure) throw failed(failure)
+  const aborted = abortError(signal, timeoutSignal)
+  if (aborted) throw aborted
+}
+
+function assertTask(task) {
+  if (typeof task !== "string" || task.trim() === "") throw new Error("Task must not be empty.")
+}
+
+function isImageBlock(image) {
+  return image?.type === "image"
+    && typeof image.data === "string" && image.data !== ""
+    && typeof image.mimeType === "string" && image.mimeType !== ""
+}
+
+function assertImages(images) {
+  if (!Array.isArray(images) || images.length === 0 || !images.every(isImageBlock)) {
+    throw new Error("Images must be ACP image content blocks.")
+  }
+}
+
+function applyStreamEvent(event, state) {
+  if (!event || typeof event !== "object" || Array.isArray(event)) {
+    throw geminiProtocolFailure()
+  }
+  if (event.type === "message") {
+    if (event.role !== "assistant" || typeof event.content !== "string" || !event.content) return undefined
+    state.text += event.content
+    state.textBytes += Buffer.byteLength(event.content)
+    if (state.textBytes > MAX_OUTPUT_BYTES) throw geminiOutputLimitFailure("response text", MAX_OUTPUT_BYTES)
+    return event.content
+  }
+  if (event.type === "result") state.result = event
+  else if (event.type === "error") {
+    state.lastError = { type: event.severity === "error" ? "ERROR_EVENT" : "WARNING_EVENT", message: event.message }
+    if (event.severity === "error" && typeof event.message === "string"
+      && /^maximum session turns exceeded$/i.test(event.message.trim())) {
+      state.terminalError = new Error("Gemini CLI reached its session turn limit.")
+    }
+  }
+  // init, tool_use, tool_result, and additive event types carry no assistant text.
+}
+
+function assertTextResult(state, settled, stderrText) {
+  if (settled.error) throw geminiStartupFailure()
+  if (!state.result) {
+    if (settled.value?.exitCode !== 0) {
+      throw geminiFailure({ exitCode: settled.value?.exitCode, signal: settled.value?.signal, stderr: stderrText })
+    }
+    throw geminiProtocolFailure()
+  }
+  if (state.result.status !== "success") {
+    throw geminiFailure({
+      error: state.result.error ?? state.lastError,
+      stderr: stderrText,
+      exitCode: settled.value?.exitCode,
+      signal: settled.value?.signal,
+    })
+  }
+  if (state.terminalError) throw state.terminalError
+  if (settled.value?.exitCode !== 0) {
+    throw geminiProcessFailure({ exitCode: settled.value?.exitCode, signal: settled.value?.signal })
+  }
+  if (!state.text.trim()) throw new Error("Gemini CLI returned no response text.")
+}
+
+async function* streamTextBody({ handle, signal, executionSignal, timeoutSignal }) {
+  const outcome = handle.done.then((value) => ({ value }), (error) => ({ error }))
+  const stderr = collectStderr(handle)
+  const state = { result: undefined, lastError: undefined, terminalError: undefined, text: "", textBytes: 0 }
+  for await (const event of readJsonLines(handle.stdout, { maxBytes: MAX_OUTPUT_BYTES, label: "stdout" })) {
+    const chunk = applyStreamEvent(event, state)
+    if (chunk) yield chunk
+  }
+  const settled = await waitForOutcome(outcome, executionSignal, signal, timeoutSignal)
+  if (executionSignal.aborted) throw abortError(signal, timeoutSignal)
+  assertTextResult(state, settled, stderr())
+}
+
+async function* streamImageBody({ handle, task, images, cwd, signal, executionSignal, timeoutSignal }) {
+  yield* streamAcpImageTask({ handle, task, images, cwd, signal: executionSignal })
+  const aborted = abortError(signal, timeoutSignal)
+  if (aborted) throw aborted
+}
+
+/**
+ * Stream assistant text deltas from one headless Gemini CLI request. The
+ * generator owns the process and terminates it when the consumer closes early.
+ * A terminal `result` event decides success; warnings before it do not.
+ */
+export async function* streamGeminiTask({ subprocess, task, cwd, model, signal }) {
+  assertTask(task)
+  const selectedModel = validateModel(model)
+  if (signal?.aborted) throw new Error("Gemini task was cancelled.")
+  yield* runManagedTask({
+    subprocess,
+    signal,
+    createSpec: async (executionSignal, getAbortError) => {
+      const command = await resolveCommand(
+        subprocess,
+        cwd,
+        executionSignal,
+        getAbortError,
+      )
+      return {
+        argv: [
+          command.command,
+          ...command.args,
+          "--prompt",
+          CLI_PROMPT,
+          "--output-format",
+          "stream-json",
+          "--approval-mode=yolo",
+          "--model",
+          selectedModel,
+        ],
+        cwd,
+        stdio: { stdin: { data: task }, stdout: "pipe", stderr: "pipe" },
+      }
+    },
+    body: streamTextBody,
+  })
+}
+
+/**
+ * Stream assistant text deltas from one ACP image request. Images keep the ACP
+ * path because headless stream-json has no image input.
+ */
+export async function* streamGeminiImageTask({ subprocess, task, images, cwd, model, signal }) {
+  assertTask(task)
+  assertImages(images)
+  const selectedModel = validateModel(model)
+  if (signal?.aborted) throw new Error("Gemini task was cancelled.")
+  yield* runManagedTask({
+    subprocess,
+    signal,
+    createSpec: async (executionSignal, getAbortError) => {
+      const command = await resolveCommand(
+        subprocess,
+        cwd,
+        executionSignal,
+        getAbortError,
+      )
+      return {
+        argv: [command.command, ...command.args, "--acp", "--approval-mode=yolo", "--model", selectedModel],
+        cwd,
+        stdio: { stdin: "pipe", stdout: "pipe", stderr: "pipe" },
+      }
+    },
+    body: (context) => streamImageBody({ ...context, task, images, cwd }),
+  })
+}
+
+export async function runGeminiTask(options) {
+  let text = ""
+  for await (const chunk of streamGeminiTask(options)) text += chunk
+  return text
 }

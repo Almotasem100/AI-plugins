@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { join, resolve } from "node:path"
-import { GEMINI_MODELS, parseGeminiOutput, runGeminiTask, validateModel } from "../src/gemini.js"
+import { Readable, Writable } from "node:stream"
+import { GEMINI_MODELS, runGeminiTask, validateModel } from "../src/gemini.js"
 import { createGeminiSubagent } from "../src/delegation.js"
 import { renderGeminiPrompt } from "../src/prompt.js"
 
@@ -15,37 +16,54 @@ assert.deepEqual(transcript.map((message) => message.role), ["system", "user", "
 assert.match(transcript[1].content, /Hello/)
 assert.match(transcript[2].content, /ZadLoop tool call read/)
 
-assert.equal(parseGeminiOutput(JSON.stringify({ response: "ok" })), "ok")
-assert.throws(() => parseGeminiOutput("no json"), /invalid JSON/)
 assert.deepEqual(GEMINI_MODELS.map(({ id }) => id), ["gemini-3.8-flash", "gemini-3.1-pro-preview"])
 for (const model of GEMINI_MODELS) assert.equal(validateModel(model.id), model.id)
 assert.equal(validateModel("default"), "gemini-3.8-flash")
 assert.throws(() => validateModel("--yolo"), /Unsupported Gemini CLI model ID/)
 assert.throws(() => validateModel(undefined), /Unsupported Gemini CLI model ID/)
 
+const streamOutput = [
+  { type: "init", session_id: "fixture", model: "fixture-model" },
+  { type: "message", role: "assistant", content: "fixture ", delta: true },
+  { type: "message", role: "assistant", content: "answer", delta: true },
+  { type: "result", status: "success", stats: {} },
+].map(JSON.stringify).join("\n") + "\n"
+
+function emptyStdin() {
+  return new Writable({ write(_chunk, _encoding, callback) { callback() } })
+}
+
+function completedHandle({ output = streamOutput, stderr = "", exitCode = 0 } = {}) {
+  return {
+    stdin: emptyStdin(),
+    stdout: Readable.from(output ? [Buffer.from(output)] : []),
+    stderr: Readable.from(stderr ? [Buffer.from(stderr)] : []),
+    collected: {},
+    done: Promise.resolve({ exitCode, signal: null }),
+    terminate() {},
+    async waitForExit() {},
+  }
+}
+
 let launch
 let waitedForExit = 0
-const stdout = JSON.stringify({ response: "fixture answer" })
 const subprocess = {
   async terminalEnvironment() { return { platform: "posix" } },
   async resolveExecutable(command) { assert.equal(command, "gemini"); return "/usr/bin/gemini" },
   spawn(spec) {
     launch = spec
     return {
-      done: Promise.resolve({ exitCode: 0, signal: null }),
+      ...completedHandle(),
       async waitForExit() { waitedForExit += 1 },
-      collected: {
-        stdout: { readFrom() { return { text: stdout, nextOffset: Buffer.byteLength(stdout), lossy: false } } },
-        stderr: { readFrom() { return { text: "", nextOffset: 0, lossy: false } } },
-      },
     }
   },
 }
 const response = await runGeminiTask({ subprocess, task: "safe fixture", cwd: "C:/project", model: "default" })
 assert.equal(response, "fixture answer")
 assert.equal(launch.cwd, "C:/project")
-assert.deepEqual(launch.argv.slice(1), ["--prompt", "Complete the task provided on standard input. Treat it as the user's request.", "--output-format", "json", "--approval-mode=yolo", "--model", "gemini-3.8-flash"])
+assert.deepEqual(launch.argv.slice(1), ["--prompt", "Complete the task provided on standard input. Treat it as the user's request.", "--output-format", "stream-json", "--approval-mode=yolo", "--model", "gemini-3.8-flash"])
 assert.deepEqual(launch.stdio.stdin, { data: "safe fixture" })
+assert.equal(launch.stdio.stdout, "pipe")
 
 for (const model of GEMINI_MODELS) {
   const gemini = createGeminiSubagent({ subprocess, name: model.subagentProvider, model: model.id })
@@ -75,25 +93,28 @@ function createAbortableSubprocess() {
     async resolveExecutable(command) { assert.equal(command, "gemini"); return "/usr/bin/gemini" },
     spawn(spec) {
       markStarted()
-      const done = new Promise((resolveDone) => {
-        let settled = false
-        const finish = () => {
-          if (settled) return
-          settled = true
-          clearTimeout(safety)
-          resolveDone({ exitCode: 0, signal: null })
-        }
-        const safety = setTimeout(finish, 5000)
-        if (spec.signal.aborted) finish()
-        else spec.signal.addEventListener("abort", finish, { once: true })
-      })
+      let settled = false
+      const stdout = new Readable({ read() {} })
+      const finish = () => {
+        if (settled) return
+        settled = true
+        clearTimeout(safety)
+        stdout.push(null)
+        resolveDone({ exitCode: 0, signal: null })
+      }
+      let resolveDone
+      const done = new Promise((resolve) => { resolveDone = resolve })
+      const safety = setTimeout(finish, 5000)
+      if (spec.signal.aborted) finish()
+      else spec.signal.addEventListener("abort", finish, { once: true })
       return {
+        stdin: emptyStdin(),
+        stdout,
+        stderr: Readable.from([]),
+        collected: {},
         done,
+        terminate() { finish() },
         async waitForExit() {},
-        collected: {
-          stdout: { readFrom() { return { text: "", nextOffset: 0, lossy: false } } },
-          stderr: { readFrom() { return { text: "", nextOffset: 0, lossy: false } } },
-        },
       }
     },
   }
@@ -174,7 +195,8 @@ const failureActivation = await failureGemini.start({
 })
 const failureResult = await failureActivation.result
 assert.equal(failureResult.stopReason, "error")
-assert.match(failureResult.diagnostic, /fixture launch failure/)
+assert.match(failureResult.diagnostic, /Gemini CLI could not start/)
+assert.doesNotMatch(failureResult.diagnostic, /fixture launch failure/)
 await failureActivation.dispose()
 
 let windowsLaunch
@@ -190,19 +212,19 @@ const windowsSubprocess = {
   },
   spawn(spec) {
     const isLookup = spec.argv.includes("gemini.cmd")
-    if (isLookup) windowsLookup = spec
-    else windowsLaunch = spec
-    const output = isLookup
-      ? `${join(windowsProject, "gemini.cmd")}\r\n${join(windowsNpm, "gemini.cmd")}\r\n`
-      : stdout
-    return {
-      done: Promise.resolve({ exitCode: 0, signal: null }),
-      async waitForExit() {},
-      collected: {
-        stdout: { readFrom() { return { text: output, nextOffset: Buffer.byteLength(output), lossy: false } } },
-        stderr: { readFrom() { return { text: "", nextOffset: 0, lossy: false } } },
-      },
+    if (isLookup) {
+      windowsLookup = spec
+      const output = `${join(windowsProject, "gemini.cmd")}\r\n${join(windowsNpm, "gemini.cmd")}\r\n`
+      return {
+        ...completedHandle({ output }),
+        collected: {
+          stdout: { readFrom() { return { text: output, nextOffset: Buffer.byteLength(output), lossy: false } } },
+          stderr: { readFrom() { return { text: "", nextOffset: 0, lossy: false } } },
+        },
+      }
     }
+    windowsLaunch = spec
+    return completedHandle()
   },
 }
 await runGeminiTask({ subprocess: windowsSubprocess, task: "windows fixture", cwd: windowsProject, model: "gemini-3.1-pro-preview" })

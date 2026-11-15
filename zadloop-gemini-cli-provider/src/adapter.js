@@ -1,5 +1,5 @@
 import { LlmAdapter } from "@deepseek-ai/dsh-llm"
-import { GEMINI_MODELS, runGeminiTask, runGeminiImageTask } from "./gemini.js"
+import { GEMINI_MODELS, streamGeminiImageTask, streamGeminiTask } from "./gemini.js"
 import { renderGeminiPrompt } from "./prompt.js"
 
 export class GeminiCliAdapter extends LlmAdapter {
@@ -46,10 +46,12 @@ export class GeminiCliAdapter extends LlmAdapter {
       return { type: "image", mimeType: version.mediaType, data: Buffer.from(version.data).toString("base64") }
     }))
     const request = { subprocess: this.subprocess, task, cwd, model: options.model, signal: options.signal }
-    const response = images.length
-      ? await runGeminiImageTask({ ...request, images })
-      : await runGeminiTask(request)
-    if (response) yield { type: "text-delta", index: 0, text: response }
+    const chunks = images.length
+      ? streamGeminiImageTask({ ...request, images })
+      : streamGeminiTask(request)
+    for await (const text of chunks) {
+      if (text) yield { type: "text-delta", index: 0, text }
+    }
     yield { type: "finish", reason: { kind: "stop" } }
   }
 }

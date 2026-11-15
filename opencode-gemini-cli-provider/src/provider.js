@@ -4,6 +4,7 @@ const EMPTY_USAGE = {
   inputTokens: { total: undefined, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
   outputTokens: { total: undefined, reasoning: undefined },
 }
+const CANCELLED_MESSAGE = "Gemini task was cancelled."
 
 function textFromPart(contentPart) {
   if (contentPart.type === "text") return contentPart.text
@@ -54,16 +55,38 @@ function finishReason() {
   return { unified: "stop", raw: "STOP" }
 }
 
+function geminiModelID(modelID) {
+  if (modelID === "default") return "gemini-3.8-flash"
+  if (modelID === "auto") return undefined
+  return modelID
+}
+
+function createRequest({ modelID, cwd, prompt, run, runImage }) {
+  const { task, images } = renderGeminiRequest(prompt)
+  return {
+    task,
+    images,
+    cwd,
+    model: geminiModelID(modelID),
+    execute: images.length ? runImage : run,
+  }
+}
+
+function requestInput(request, signal, onText) {
+  return {
+    task: request.task,
+    ...(request.images.length ? { images: request.images } : {}),
+    cwd: request.cwd,
+    model: request.model,
+    ...(signal ? { signal } : {}),
+    ...(onText ? { onText } : {}),
+  }
+}
+
 function generateOptions({ modelID, cwd, run, runImage }) {
   return async (options) => {
-    const { task, images } = renderGeminiRequest(options.prompt)
-    const generatedText = await (images.length ? runImage : run)({
-      task,
-      ...(images.length ? { images } : {}),
-      cwd,
-      model: modelID === "default" ? "gemini-3.8-flash" : modelID === "auto" ? undefined : modelID,
-      signal: options.abortSignal,
-    })
+    const request = createRequest({ modelID, cwd, prompt: options.prompt, run, runImage })
+    const generatedText = await request.execute(requestInput(request, options.abortSignal))
     return {
       content: [{ type: "text", text: generatedText }],
       finishReason: finishReason(),
@@ -84,24 +107,75 @@ export function createGeminiLanguageModel({ modelID, cwd, run = runGeminiTask, r
     supportedUrls: {},
     doGenerate,
     async doStream(options) {
-      const generatedResponse = await doGenerate(options)
+      const request = createRequest({ modelID, cwd, prompt: options.prompt, run, runImage })
+      const consumerAbort = new AbortController()
+      const signal = options.abortSignal
+        ? AbortSignal.any([options.abortSignal, consumerAbort.signal])
+        : consumerAbort.signal
       const id = "gemini-cli-response"
-      const text = generatedResponse.content[0].text
+      let settled = false
+      let runCompletion
+
       const stream = new ReadableStream({
         start(controller) {
-          controller.enqueue({ type: "stream-start", warnings: generatedResponse.warnings })
-          controller.enqueue({ type: "text-start", id })
-          if (text) controller.enqueue({ type: "text-delta", id, delta: text })
-          controller.enqueue({ type: "text-end", id })
-          controller.enqueue({
-            type: "finish",
-            finishReason: generatedResponse.finishReason,
-            usage: generatedResponse.usage,
-            response: generatedResponse.response,
+          let emitted = ""
+          const send = (event) => {
+            if (settled) return
+            try {
+              controller.enqueue(event)
+            } catch {
+              settled = true
+            }
+          }
+          const onText = (delta) => {
+            if (settled || !delta) return
+            emitted += delta
+            send({ type: "text-delta", id, delta })
+          }
+
+          send({ type: "stream-start", warnings: [] })
+          send({ type: "text-start", id })
+
+          runCompletion = request.execute(requestInput(request, signal, onText)).then(
+            (generatedText) => {
+              if (settled) return
+              // Safety net for a runner that returned text without reporting deltas.
+              if (typeof generatedText === "string" && generatedText.length > emitted.length) {
+                if (generatedText.startsWith(emitted)) onText(generatedText.slice(emitted.length))
+              }
+              if (settled) return
+              send({ type: "text-end", id })
+              send({
+                type: "finish",
+                finishReason: finishReason(),
+                usage: EMPTY_USAGE,
+                response: { modelId: modelID, timestamp: new Date() },
+              })
+              settled = true
+              controller.close()
+            },
+            (error) => {
+              if (settled) throw error
+              settled = true
+              try {
+                controller.enqueue({ type: "error", error })
+                controller.close()
+              } catch {
+                // The consumer already cancelled; the run was aborted below.
+              }
+            },
+          )
+        },
+        cancel() {
+          settled = true
+          consumerAbort.abort()
+          return runCompletion.catch((error) => {
+            if (error instanceof Error && error.message === CANCELLED_MESSAGE) return
+            throw error
           })
-          controller.close()
         },
       })
+
       return { stream }
     },
   }

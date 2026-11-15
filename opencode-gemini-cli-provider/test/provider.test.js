@@ -2,6 +2,12 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { createGeminiLanguageModel, renderGeminiPrompt } from "../src/provider.js"
 
+async function collect(stream) {
+  const events = []
+  for await (const event of stream) events.push(event)
+  return events
+}
+
 test("renderGeminiPrompt preserves message roles and tool results", () => {
   const prompt = renderGeminiPrompt([
     { role: "system", content: "Be concise." },
@@ -56,11 +62,126 @@ test("stream adapter emits a complete AI SDK V3 text response", async () => {
     run: async () => "Streamed after completion",
   })
   const { stream } = await model.doStream({ prompt: [{ role: "user", content: "Hello" }] })
-  const events = []
-  for await (const event of stream) events.push(event)
+  const events = await collect(stream)
 
   assert.deepEqual(events.map((event) => event.type), ["stream-start", "text-start", "text-delta", "text-end", "finish"])
   assert.equal(events[2].delta, "Streamed after completion")
+})
+
+test("stream adapter forwards deltas before the request completes", { timeout: 10_000 }, async () => {
+  let release
+  const gate = new Promise((resolve) => { release = resolve })
+  let completed = false
+  const model = createGeminiLanguageModel({
+    modelID: "gemini-3.8-flash",
+    cwd: "C:/project",
+    run: async ({ onText }) => {
+      onText("one")
+      await gate
+      onText(" two")
+      completed = true
+      return "one two"
+    },
+  })
+  const { stream } = await model.doStream({ prompt: [{ role: "user", content: "Hello" }] })
+  const reader = stream.getReader()
+  const events = []
+
+  for (let index = 0; index < 3; index += 1) events.push((await reader.read()).value)
+  assert.deepEqual(events.map((event) => event.type), ["stream-start", "text-start", "text-delta"])
+  assert.equal(events[2].delta, "one")
+  assert.equal(completed, false)
+
+  release()
+  for (let next = await reader.read(); !next.done; next = await reader.read()) events.push(next.value)
+
+  assert.deepEqual(events.map((event) => event.type), [
+    "stream-start",
+    "text-start",
+    "text-delta",
+    "text-delta",
+    "text-end",
+    "finish",
+  ])
+  assert.equal(events.filter((event) => event.type === "text-delta").map((event) => event.delta).join(""), "one two")
+})
+
+test("stream adapter reports a failure after partial output as an error part", async () => {
+  const model = createGeminiLanguageModel({
+    modelID: "gemini-3.8-flash",
+    cwd: "C:/project",
+    run: async ({ onText }) => {
+      onText("partial")
+      throw new Error("Gemini CLI reported a failure.")
+    },
+  })
+  const { stream } = await model.doStream({ prompt: [{ role: "user", content: "Hello" }] })
+  const events = await collect(stream)
+
+  assert.deepEqual(events.map((event) => event.type), ["stream-start", "text-start", "text-delta", "error"])
+  assert.equal(events[2].delta, "partial")
+  assert.equal(events[3].error.message, "Gemini CLI reported a failure.")
+  assert.equal(events.some((event) => event.type === "finish"), false)
+})
+
+test("cancelling the consumer waits for request cleanup", async () => {
+  let receivedSignal
+  let aborted = false
+  let cleanupFinished = false
+  let cancellationResolved = false
+  let finishCleanup
+  const model = createGeminiLanguageModel({
+    modelID: "gemini-3.8-flash",
+    cwd: "C:/project",
+    run: ({ signal }) => new Promise((_, reject) => {
+      receivedSignal = signal
+      signal.addEventListener("abort", () => {
+        aborted = true
+      }, { once: true })
+      finishCleanup = () => {
+        cleanupFinished = true
+        reject(new Error("Gemini task was cancelled."))
+      }
+    }),
+  })
+  const { stream } = await model.doStream({ prompt: [{ role: "user", content: "Hello" }] })
+  const reader = stream.getReader()
+  await reader.read()
+  const cancellation = reader.cancel().then(() => { cancellationResolved = true })
+  await Promise.resolve()
+  const cancellationWaitedForCleanup = !cancellationResolved
+  finishCleanup()
+  await cancellation
+
+  assert.equal(cancellationWaitedForCleanup, true)
+  assert.equal(cleanupFinished, true)
+  assert.equal(aborted, true)
+  assert.equal(receivedSignal.aborted, true)
+})
+
+test("an aborted request signal ends the stream with an error part", async () => {
+  const controller = new AbortController()
+  let receivedSignal
+  const model = createGeminiLanguageModel({
+    modelID: "gemini-3.8-flash",
+    cwd: "C:/project",
+    run: ({ signal }) => new Promise((resolve, reject) => {
+      receivedSignal = signal
+      signal.addEventListener("abort", () => reject(new Error("Gemini task was cancelled.")), { once: true })
+    }),
+  })
+  const { stream } = await model.doStream({
+    prompt: [{ role: "user", content: "Hello" }],
+    abortSignal: controller.signal,
+  })
+  const reading = collect(stream)
+  controller.abort()
+  const events = await reading
+
+  assert.equal(receivedSignal.aborted, true)
+  const errorPart = events.find((event) => event.type === "error")
+  assert.ok(errorPart)
+  assert.match(errorPart.error.message, /cancelled/)
 })
 
 test("non-image prompt content fails instead of being silently dropped", () => {
