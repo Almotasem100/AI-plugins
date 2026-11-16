@@ -1,0 +1,4 @@
+- insert:
+    - id: usage-panel
+      name: '@local/usage-panel'
+      inject: [connection, credentials, llm, authorization]

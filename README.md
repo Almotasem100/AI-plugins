@@ -8,6 +8,7 @@ tests.
 - [OpenCode Gemini CLI Provider](opencode-gemini-cli-provider/) — adds Gemini CLI as a selectable OpenCode provider.
 - [ZadLoop Gemini CLI Provider](zadloop-gemini-cli-provider/README.md) — adds Gemini CLI as a selectable ZadLoop model provider and delegation backend.
 - [Donald Duck](donald-duck/README.md) — a local DSH Client overlay bundle for ZadLoop.
+- [Subscription usage](usage-panel/README.md) — shows Claude and ChatGPT subscription usage on request in ZadLoop.
 - [OpenCode Desktop themes](opencode-desktop-themes/README.md) — five native Desktop color themes.
 
 ## Development checks
@@ -16,6 +17,7 @@ Run the checks for the plugins from the repository root:
 
 ```sh
 npm --prefix donald-duck test
+npm --prefix usage-panel test
 npm --prefix opencode-gemini-cli-provider test
 npm --prefix zadloop-gemini-cli-provider test
 npm --prefix opencode-desktop-themes test
