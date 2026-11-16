@@ -112,6 +112,13 @@ Gemini's configured MCP servers, and this YOLO-launched CLI also retains native 
 The plugin has not demonstrated isolation from those bypasses, real ACP/MCP parked continuation, or production
 correlation, cancellation, and permission behavior.
 
+### Future tasks
+
+- Investigate a host-controlled tool bridge; implement it only after proving host permission enforcement,
+  session isolation and correlation, cancellation, and exclusion of native and ambient tool bypasses.
+- Investigate mid-request steering when host and Gemini interfaces can support it without cancelling or replacing
+  the active request.
+
 ## Development
 
 ```sh

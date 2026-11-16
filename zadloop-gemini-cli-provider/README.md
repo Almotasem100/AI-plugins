@@ -40,6 +40,11 @@ Neither host-controlled tool bridging nor steering is implemented.
 
 The previous claim that host session identity, tool results, or a host execution seam are unavailable was too strong. Production bridging remains disabled until the listed isolation, authorization, correlation, concurrency, and cancellation gates are proven.
 
+### Future tasks
+
+- Investigate a host-controlled tool bridge and prove the permission, isolation, correlation, cancellation, and tool-bypass safeguards above before enabling it.
+- Investigate mid-request steering when the host and Gemini interfaces can support it without cancelling or replacing the active request.
+
 ## Host compatibility
 
 The declared peer range keeps `@deepseek-ai/dsh-llm` `0.2.1-rc.2`, `0.2.2-rc.1`, and adds `0.2.2-rc.2` for the reported DSH `0.2.2-rc.2` warning.
