@@ -87,6 +87,9 @@ remains user-visible in the README. Live model requests require separate authori
 
 ## Verification
 
+- On 2026-11-16 the owner reported successful live image requests to Gemini in both OpenCode and ZadLoop. This is
+  evidence for the exercised image path, not independent verification of specific models, versions, failure paths,
+  cancellation, host compatibility as a whole, or the tool bridge.
 - Latest coordinator verification on Windows: `npm test` passed all 40 OpenCode offline tests and the ZadLoop
   smoke test plus 44 offline tests. Sol's focused recheck found the three remaining lifecycle findings resolved;
   18 targeted existing tests and 37 additional offline probes passed. Real process-tree behavior remains unverified.
@@ -100,8 +103,9 @@ remains user-visible in the README. Live model requests require separate authori
   diagnostics are bounded/path-free and retain safe codes such as `ENOENT`.
 - `node --check` passed for `src/gemini.js` and `test/gemini.test.js`; scoped `git diff --check` passed.
 - The ZadLoop offline tests do not validate a live DSH host.
-- No live Gemini request was made. Fake CLI tests do not prove live `stream-json` or ACP behavior. OpenCode host
-  integration was not re-run; POSIX execution and the Node.js 20.3.0 minimum were not verified.
+- The coordinator did not make a live Gemini request during that verification; fake CLI tests alone do not prove live
+  `stream-json` or ACP behavior. OpenCode host integration was not re-run in that round; POSIX execution and the
+  Node.js 20.3.0 minimum were not verified.
 
 Earlier integration verification (not rerun during this review):
 

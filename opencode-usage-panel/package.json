@@ -1,0 +1,14 @@
+{
+  "name": "opencode-subscription-usage",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Show Claude and ChatGPT subscription usage in OpenCode Desktop",
+  "exports": {
+    ".": "./src/index.js",
+    "./gui-experimental": "./gui-experimental.cjs"
+  },
+  "files": ["src/*.js", "src/*.mjs", "gui-experimental.cjs", "test/*.mjs", "test/*.cjs", "README.md"],
+  "engines": { "node": ">=20.3.0" },
+  "scripts": { "test": "node --test" }
+}

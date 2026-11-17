@@ -54,7 +54,7 @@ The addition is based on a read-only comparison of the published packages, not a
 - `lib/types/types.d.ts`, `lib/types/assistant-stream.d.ts`, `lib/types/message.d.ts`, and `lib/types/brand.d.ts` are byte-identical between `0.2.2-rc.1` and `0.2.2-rc.2`.
 - In `lib/types/index.d.ts`, the only changes are `LlmError`: its constructor now requires `BuiltinLlmFailureCode` instead of any string, and `LlmError.fromFailure` was added. The `LlmAdapter` class declaration is byte-identical, so `stream`, `resolveModel`, `listModels`, and `imageRequestTarget` are unchanged.
 - `0.2.2-rc.2` moves `HarnessError` to a new `@deepseek-ai/dsh-error` peer dependency and narrows `LlmError`. This plugin imports only `LlmAdapter` and does not construct `LlmError` or `HarnessError`, so the narrowing does not affect it. The host installation must provide the new peer dependency.
-- The offline tests substitute a local `LlmAdapter` stub; they do not load the real host package and cannot prove runtime compatibility. DSH `0.2.2-rc.2` with this plugin has not been live-validated here.
+- The offline tests substitute a local `LlmAdapter` stub; they do not load the real host package and cannot prove runtime compatibility. On 2026-11-16 the owner reported a successful live Gemini image request in ZadLoop; this does not verify other request paths, error handling, cancellation, or all host compatibility.
 
 ## Verify
 
