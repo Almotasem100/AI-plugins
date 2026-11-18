@@ -4,7 +4,7 @@ const fs = require("node:fs")
 const vm = require("node:vm")
 const path = require("node:path")
 
-test("GUI entry registers five distinct, readable palette definitions", () => {
+test("GUI entry registers distinct, readable palette definitions", () => {
   const entry = path.join(__dirname, "..", "gui-experimental.cjs")
   const registry = {}
   const sandbox = {
@@ -21,9 +21,9 @@ test("GUI entry registers five distinct, readable palette definitions", () => {
     themes.push(theme)
   } })
   assert.deepEqual(themes.map((theme) => theme.id), [
-    "midnight-purple", "ocean-blue", "emerald-night", "warm-sunset", "clean-light",
+    "midnight-purple", "ocean-blue", "emerald-night", "warm-sunset", "midnight-workspace", "clean-light",
   ])
-  assert.equal(new Set(themes.map((theme) => theme.name)).size, 5)
+  assert.equal(new Set(themes.map((theme) => theme.name)).size, themes.length)
   for (const theme of themes) {
     for (const mode of ["light", "dark"]) {
       const palette = theme[mode].palette
@@ -31,6 +31,16 @@ test("GUI entry registers five distinct, readable palette definitions", () => {
         assert.match(palette[key], /^#[0-9a-f]{6}$/i, `${theme.id} ${mode} ${key}`)
       }
       assert.ok(contrast(palette.neutral, palette.ink) >= 7, `${theme.id} ${mode} ink`)
+    }
+  }
+  const workspace = themes.find((theme) => theme.id === "midnight-workspace").dark
+  const surfaces = ["v2-background-bg-base", "v2-background-bg-layer-01", "v2-background-bg-layer-02"]
+    .map((key) => workspace.v2Overrides[key])
+  assert.equal(new Set(surfaces).size, surfaces.length)
+  for (const surface of surfaces) {
+    assert.match(surface, /^#[0-9a-f]{6}$/i)
+    for (const key of ["ink", "primary", "success", "warning", "error", "info"]) {
+      assert.ok(contrast(surface, workspace.palette[key]) >= 4.5, `${surface} ${key}`)
     }
   }
 })

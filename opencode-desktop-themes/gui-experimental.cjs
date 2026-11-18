@@ -42,6 +42,23 @@ const themes = [
     } },
   },
   {
+    id: "midnight-workspace", name: "Midnight Workspace",
+    light: { palette: { ...light, primary: "#594a9c", info: "#365d9e" } },
+    dark: {
+      palette: {
+        neutral: "#111620", ink: "#e4e9f3", primary: "#b9abf3",
+        interactive: "#b9abf3", success: "#8bd0ad", warning: "#e7c17e",
+        error: "#f19a9f", info: "#99bff2", diffAdd: "#8bd0ad", diffDelete: "#f19a9f",
+      },
+      // Keep native surfaces distinct without styling private DOM selectors.
+      v2Overrides: {
+        "v2-background-bg-base": "#111620",
+        "v2-background-bg-layer-01": "#1b2331",
+        "v2-background-bg-layer-02": "#252e3e",
+      },
+    },
+  },
+  {
     id: "clean-light", name: "Clean Light",
     light: { palette: light },
     dark: { palette: {

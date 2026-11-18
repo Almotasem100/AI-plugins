@@ -1,11 +1,20 @@
 # OpenCode Desktop themes
 
-A GUI-only plugin for OpenCode Desktop 2.2.6. Midnight Purple, Ocean Blue,
-Emerald Night, Warm Sunset, and Clean Light appear in the native theme picker.
-Each includes light and dark palettes; Desktop's appearance mode determines
-which is displayed. Choose Dark mode for the four night-themed palettes and
-Light mode for Clean Light. Syntax, diff, and UI colors are derived by Desktop
-from each palette.
+A GUI-only plugin originally written for OpenCode Desktop 2.2.6. Midnight Purple, Ocean Blue,
+Emerald Night, Warm Sunset, Clean Light, and Midnight Workspace appear in the
+native theme picker. Each includes light and dark palettes; Desktop's appearance
+mode determines which is displayed. Choose Dark mode for the night-themed
+palettes and Light mode for Clean Light. Syntax, diff, and UI colors are derived
+by Desktop from each palette.
+
+Midnight Workspace uses a graphite-navy base (`#111620`), elevated composer
+surface (`#1b2331`), and a lighter shared surface (`#252e3e`) for user bubbles
+and code. Its soft violet accent (`#b9abf3`) and restrained semantic colors
+create a cohesive workspace without custom CSS. These are shared native tokens:
+other elements can use the same surfaces, and the sidebar and conversation may
+share the base color. The Theme API does not provide independent layout or
+per-element styling controls. GUI APIs are experimental and may change; the
+2.3.0 token mappings have been inspected but not visually verified.
 
 The plugin uses the experimental `Theme` registry and has no build step,
 external runtime dependencies, telemetry, or network requests. The single
@@ -35,7 +44,8 @@ return when the plugin is re-enabled.
 
 Run `npm --prefix opencode-desktop-themes test` from the repository root.
 The offline test executes setup with a mock GUI SDK and checks registration,
-palette structure and base ink contrast. It does not run Desktop's palette
+palette structure, base ink contrast, and Midnight Workspace's explicit dark
+surface/palette contrast. It does not run Desktop's palette
 generator or verify rendered text, syntax, diffs, selections or controls.
 Manually check those surfaces in both appearance modes, theme switching, and
 disable/re-enable behavior in Desktop before relying on these themes.
