@@ -1,6 +1,8 @@
 import assert from "node:assert/strict"
+import childProcess from "node:child_process"
 import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
-import { delimiter, join } from "node:path"
+import { syncBuiltinESMExports } from "node:module"
+import { basename, delimiter, join } from "node:path"
 import { tmpdir } from "node:os"
 import test from "node:test"
 import { runGeminiImageTask, runGeminiTask, validateModel } from "../src/gemini.js"
@@ -69,13 +71,17 @@ function setEnvironment(values) {
 }
 
 async function withUnavailableTaskkill(temporaryRoot, runTest) {
-  const restoreEnvironment = setEnvironment({
-    SystemRoot: join(temporaryRoot, "missing-system-root"),
-  })
+  const spawn = childProcess.spawn
+  const unavailableTaskkill = join(temporaryRoot, "missing-system-root", "taskkill.exe")
+  // Fail only the cleanup subprocess; Node itself needs the real SystemRoot.
+  childProcess.spawn = (command, args, options) =>
+    spawn(basename(command).toLowerCase() === "taskkill.exe" ? unavailableTaskkill : command, args, options)
+  syncBuiltinESMExports()
   try {
     return await runTest()
   } finally {
-    restoreEnvironment()
+    childProcess.spawn = spawn
+    syncBuiltinESMExports()
   }
 }
 
