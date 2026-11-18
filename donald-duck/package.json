@@ -6,7 +6,7 @@
   "engines": { "node": ">=20" },
   "scripts": {
     "build": "node scripts/build.js",
-    "pretest": "node scripts/build.js",
+    "pretest": "node scripts/build.js --check",
     "prepack": "node scripts/build.js",
     "test": "node test/smoke.js && node test/drag.js"
   },

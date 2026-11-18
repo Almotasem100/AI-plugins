@@ -1001,6 +1001,7 @@ test("ACP client requests are rejected instead of auto-approved", async () => {
     const lines = readline.createInterface({ input: process.stdin })
     const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n')
     let promptId
+    const clientResponses = []
     lines.on('line', line => {
       const m = JSON.parse(line)
       if (m.method === 'initialize') send({jsonrpc:'2.0',id:m.id,result:{protocolVersion:1,agentCapabilities:{promptCapabilities:{image:true}}}})
@@ -1008,9 +1009,13 @@ test("ACP client requests are rejected instead of auto-approved", async () => {
       if (m.method === 'session/prompt') {
         promptId = m.id
         send({jsonrpc:'2.0',id:99,method:'session/request_permission',params:{sessionId:'test'}})
+        send({jsonrpc:'2.0',id:100,method:'session/update',params:{sessionId:'test'}})
       }
-      if (m.id === 99) {
-        fs.writeFileSync(process.env.GEMINI_TEST_CAPTURE_FILE, JSON.stringify(m))
+      if (m.id === 99 || m.id === 100) {
+        clientResponses.push(m)
+      }
+      if (clientResponses.length === 2) {
+        fs.writeFileSync(process.env.GEMINI_TEST_CAPTURE_FILE, JSON.stringify(clientResponses))
         send({jsonrpc:'2.0',method:'session/update',params:{sessionId:'test',update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'done'}}}})
         send({jsonrpc:'2.0',id:promptId,result:{stopReason:'end_turn'}})
       }
@@ -1022,16 +1027,88 @@ test("ACP client requests are rejected instead of auto-approved", async () => {
         task: "describe",
         images: [{ type: "image", mimeType: "image/png", data: "AQID" }],
         cwd: projectDirectory,
+        signal: AbortSignal.timeout(5_000),
       }),
     )
     assert.equal(text, "done")
-    const response = JSON.parse(await readFile(captureFile, "utf8"))
-    assert.equal(response.result, undefined)
-    assert.equal(response.error.code, -32601)
+    const responses = JSON.parse(await readFile(captureFile, "utf8"))
+    assert.deepEqual(responses.map(({ id, error }) => [id, error.code]), [[99, -32601], [100, -32601]])
+    assert.ok(responses.every((response) => !Object.hasOwn(response, "result")))
   } finally {
     restoreEnvironment()
     await rm(captureFile, { force: true })
   }
+})
+
+test("ACP rejects invalid JSON-RPC envelopes and unmatched or malformed responses", { timeout: 15_000 }, async (t) => {
+  const cases = [
+    ["wrong JSON-RPC version", "send({jsonrpc:'1.0',method:'session/update',params:{sessionId:'test',update:{}}})", true],
+    ["unmatched response ID", "send({jsonrpc:'2.0',id:999,result:{}})", true],
+    ["response with both result and error", "send({jsonrpc:'2.0',id:m.id,result:{protocolVersion:1},error:{code:-1,message:'failed'}})"],
+    ["response with neither result nor error", "send({jsonrpc:'2.0',id:m.id})"],
+  ]
+
+  for (const [scenario, response, afterInitialize] of cases) {
+    await t.test(scenario, async () => {
+      const source = `
+        const readline = require('node:readline')
+        const lines = readline.createInterface({ input: process.stdin })
+        const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n')
+        lines.on('line', line => {
+          const m = JSON.parse(line)
+          if (m.method === 'initialize') {
+            ${afterInitialize ? "send({jsonrpc:'2.0',id:m.id,result:{protocolVersion:1,agentCapabilities:{promptCapabilities:{image:true}}}})" : response}
+            ${afterInitialize ? response : ""}
+          }
+          if (m.method === 'session/new') send({jsonrpc:'2.0',id:m.id,result:{sessionId:'active-session'}})
+          if (m.method === 'session/prompt') {
+            send({jsonrpc:'2.0',method:'session/update',params:{sessionId:'active-session',update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text:'answer'}}}})
+            send({jsonrpc:'2.0',id:m.id,result:{stopReason:'end_turn'}})
+          }
+        })`
+
+      await withFakeGemini(source, ({ projectDirectory }) =>
+        assert.rejects(runGeminiImageTask({
+          task: "describe",
+          images: [{ type: "image", mimeType: "image/png", data: "AQID" }],
+          cwd: projectDirectory,
+        }), /not valid JSON-RPC/),
+      )
+    })
+  }
+})
+
+test("ACP ignores image updates from sessions other than the active session", async () => {
+  const source = `
+    const readline = require('node:readline')
+    const lines = readline.createInterface({ input: process.stdin })
+    const send = (message) => process.stdout.write(JSON.stringify(message) + '\\n')
+    lines.on('line', line => {
+      const m = JSON.parse(line)
+      if (m.method === 'initialize') {
+        send({jsonrpc:'2.0',id:m.id,result:{protocolVersion:1,agentCapabilities:{promptCapabilities:{image:true}}}})
+      }
+      if (m.method === 'session/new') send({jsonrpc:'2.0',id:m.id,result:{sessionId:'active-session'}})
+      if (m.method === 'session/prompt') {
+        const update = (sessionId, text) => send({jsonrpc:'2.0',method:'session/update',params:{sessionId,update:{sessionUpdate:'agent_message_chunk',content:{type:'text',text}}}})
+        update('foreign-session', 'must not leak')
+        update('active-session', 'active answer')
+        send({jsonrpc:'2.0',id:m.id,result:{stopReason:'end_turn'}})
+      }
+    })`
+  const chunks = []
+
+  const text = await withFakeGemini(source, ({ projectDirectory }) =>
+    runGeminiImageTask({
+      task: "describe",
+      images: [{ type: "image", mimeType: "image/png", data: "AQID" }],
+      cwd: projectDirectory,
+      onText: (chunk) => chunks.push(chunk),
+    }),
+  )
+
+  assert.equal(text, "active answer")
+  assert.deepEqual(chunks, ["active answer"])
 })
 
 test("ACP output that is not JSON-RPC fails with a protocol error", async () => {

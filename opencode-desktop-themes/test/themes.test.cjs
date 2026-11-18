@@ -28,7 +28,10 @@ test("GUI entry registers distinct, readable palette definitions", () => {
     for (const mode of ["light", "dark"]) {
       const palette = theme[mode].palette
       for (const key of ["neutral", "ink", "primary", "success", "warning", "error", "info"]) {
-        assert.match(palette[key], /^#[0-9a-f]{6}$/i, `${theme.id} ${mode} ${key}`)
+        assert.ok(Object.hasOwn(palette, key), `${theme.id} ${mode} is missing ${key}`)
+      }
+      for (const [key, color] of Object.entries(palette)) {
+        assert.match(color, /^#[0-9a-f]{6}$/i, `${theme.id} ${mode} ${key}`)
       }
       assert.ok(contrast(palette.neutral, palette.ink) >= 7, `${theme.id} ${mode} ink`)
     }

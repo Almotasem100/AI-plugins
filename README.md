@@ -1,35 +1,40 @@
 # AI Plugins
 
-A collection of plugins for AI development tools. Each plugin lives in its own directory and has its own README and
-tests.
+Local plugins for OpenCode and ZadLoop. Each plugin is independently installable from its own directory;
+follow its README for setup and host requirements.
 
-## Plugins
+## OpenCode
 
-- [OpenCode Gemini CLI Provider](opencode-gemini-cli-provider/) — adds Gemini CLI as a selectable OpenCode provider.
-- [ZadLoop Gemini CLI Provider](zadloop-gemini-cli-provider/README.md) — adds Gemini CLI as a selectable ZadLoop model provider and delegation backend.
-- [Donald Duck](donald-duck/README.md) — a local DSH Client overlay bundle for ZadLoop.
-- [Subscription usage](usage-panel/README.md) — shows Claude and ChatGPT subscription usage on request in ZadLoop.
-- [OpenCode subscription usage](opencode-usage-panel/README.md) — shows subscription usage in OpenCode Desktop.
-- [OpenCode Desktop themes](opencode-desktop-themes/README.md) — five native Desktop color themes.
+| Plugin | Host part | What it does |
+| --- | --- | --- |
+| [Gemini CLI provider](opencode-gemini-cli-provider/README.md) | Server | Adds locally authenticated Gemini CLI models. |
+| [Subscription usage](opencode-usage-panel/README.md) | Server + Desktop GUI (experimental API) | Shows Claude and ChatGPT subscription usage on demand. |
+| [Desktop themes](opencode-desktop-themes/README.md) | Desktop GUI (experimental API) | Adds color palettes to the native theme picker. |
 
-## Development checks
+## ZadLoop
 
-Run the checks for the plugins from the repository root:
+| Plugin | Host part | What it does |
+| --- | --- | --- |
+| [Gemini CLI provider](zadloop-gemini-cli-provider/README.md) | Host | Adds Gemini CLI as a selectable model provider and delegation backend. |
+| [Subscription usage](usage-panel/README.md) | Host + Client | Shows Claude and ChatGPT subscription usage on demand. |
+| [Donald Duck](donald-duck/README.md) | Client | Adds a movable duck overlay. |
+
+## Development
+
+Use Node.js 22 to match CI. From the repository root:
 
 ```sh
-npm --prefix donald-duck test
-npm --prefix usage-panel test
+npm test
 npm --prefix opencode-usage-panel test
-npm --prefix opencode-gemini-cli-provider test
-npm --prefix zadloop-gemini-cli-provider test
-npm --prefix opencode-desktop-themes test
 ```
 
-The duck checks rebuild its client bundle and run offline sprite/drag regressions; they do not render the installed
-plugin. Both Gemini test suites are offline and do not make live model requests. See each plugin's README for runtime
-requirements, setup, and verification limits.
+The first command runs all six offline suites; the second shows how to run just one.
+No dependency install, harness, or subscription sign-in is needed for these checks.
+See [Contributing](CONTRIBUTING.md) for package boundaries, adding a plugin, and live verification.
 
 ## Vendor records
 
-- [dsh-sidebar-browser-cdp](vendor/dsh-sidebar-browser-cdp/README.md) — provenance and pinned upstream commit for the profile-installed DSH sidebar browser plugin.
-- [opencode-anthropic-login-via-cli](vendor/opencode-anthropic-login-via-cli/README.md) — provenance and pinned upstream commit for the globally configured OpenCode Anthropic authentication plugin.
+[`vendor/`](vendor/) documents third-party plugins configured outside this repository. It contains provenance records, not installable copies:
+
+- [dsh-sidebar-browser-cdp](vendor/dsh-sidebar-browser-cdp/README.md) — ZadLoop sidebar browser.
+- [opencode-anthropic-login-via-cli](vendor/opencode-anthropic-login-via-cli/README.md) — OpenCode Anthropic authentication.

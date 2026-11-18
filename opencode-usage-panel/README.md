@@ -8,12 +8,22 @@ An OpenCode Desktop GUI plugin that shows Claude and ChatGPT subscription usage 
 - An active Claude subscription OAuth connection for Claude usage.
 - An active OpenAI Codex browser or device-code OAuth connection with an account ID for ChatGPT usage. OpenCode's `chatgpt-token-sharing` method is not supported because its credential does not provide the account ID required by the tested Codex usage endpoint.
 
-The plugin resolves each provider's active connection using OpenCode's host integration API. OpenCode may refresh an expiring OAuth credential during resolution. The plugin does not read credential files or send credentials to the GUI. If no supported connection exists or a provider rejects the request, the panel reports the usage as unavailable. A credential lookup that never finishes remains in flight to avoid starting overlapping lookups; if it stays stuck, restart the OpenCode host before retrying. Both provider usage endpoints are undocumented and may change without notice; provider policies may restrict use of subscription OAuth credentials by third-party tools.
+The plugin resolves each provider's active connection through OpenCode. OpenCode may refresh an expiring OAuth
+credential during resolution. The plugin does not read credential files or send credentials to the GUI.
+
+- No active connection: **Not signed in**.
+- Unsupported connection: **Unavailable**.
+- Expired credential or HTTP 401: **Session expired**.
+- Stuck credential lookup: it remains in flight to prevent duplicate lookups. If it does not recover, restart the
+  OpenCode host before retrying.
+
+Both provider usage endpoints are undocumented and may change without notice. Provider policies may restrict
+third-party use of subscription OAuth credentials.
 
 ## Install
 
-Add this directory's absolute path to the existing `plugins` array in `~/.config/opencode/opencode.json`, preserving the other entries. Open the panel from a session's header after the session has loaded.
+Add this directory's absolute path to the existing `plugins` array in your global `opencode.json` or `opencode.jsonc`, preserving the other entries. Open the panel from a session's header after the session has loaded. To remove both the server and Desktop parts, remove this directory's entry from `plugins`.
 
 ## Verify
 
-Run `npm test` in this directory. Tests use fake credentials and network responses; they do not make live provider requests or exercise the installed Desktop GUI.
+Run `npm test` in this directory. Tests use fake credentials and network responses; they do not make live provider requests or exercise the installed Desktop GUI. See the [Desktop verification record](HANDOFF.md) for previously observed behavior and remaining manual checks.

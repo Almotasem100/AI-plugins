@@ -1,0 +1,3 @@
+# Keep the generated bundle comparison byte-for-byte across checkouts.
+/donald-duck/client.source.js text eol=lf
+/donald-duck/client.js text eol=lf

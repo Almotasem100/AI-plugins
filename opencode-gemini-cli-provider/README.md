@@ -26,7 +26,8 @@ Add this directory to the `plugins` array in your global OpenCode configuration 
 ```
 
 If the configuration already exists, add the plugin path to its existing `plugins` array and preserve its other settings.
-OpenCode watches configuration files and loads plugin changes without requiring a restart.
+OpenCode watches configuration files and loads plugin changes without requiring a restart. To remove the provider, remove
+this path from `plugins` and remove the sample agent file if you copied it.
 
 ## Use
 
@@ -77,6 +78,8 @@ thinking effort through Gemini CLI configuration. Those generation settings cont
 
 - Text requests use Gemini CLI's `stream-json` output and image requests use ACP updates. Assistant text is forwarded
   to OpenCode as Gemini produces it, so the response appears while the request is still running.
+- For image requests, the adapter forwards text only from the ACP session it opened and stops on malformed or
+  unmatched JSON-RPC responses.
 - With `stream-json`, text emitted during intermediate Gemini turns (before one of Gemini's own tool calls) is also
   streamed. OpenCode shows that text before the final answer; it is not a separate tool card.
 - For headless `stream-json` requests, the CLI's final `result` event normally decides
@@ -125,4 +128,5 @@ correlation, cancellation, and permission behavior.
 npm test
 ```
 
-Tests are offline and use a fake Gemini executable. They do not make a live model request.
+Tests are offline and use a fake Gemini executable. They do not make a live model request. See the
+[design and verification record](TASK-CONTEXT.md) for earlier host checks and limits of the tool-handoff experiment.
