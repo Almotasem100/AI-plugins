@@ -16,9 +16,18 @@ function panel(fetch) {
   let index = 0;
   let nextTimer = 0;
   let Component;
+  const documentListeners = new Map();
   const React = {
     Fragment: Symbol('fragment'),
-    createElement: (type, props, ...children) => ({ type, props: props || {}, children }),
+    createElement(type, props, ...children) {
+      const element = {
+        type, props: props || {}, children, contains: () => false,
+        getBoundingClientRect: () => ({ top: 20, right: 40, width: 16, height: 16 }),
+        focus() {},
+      };
+      if (element.props.ref) element.props.ref.current = element;
+      return element;
+    },
     useSyncExternalStore() {},
     useState(initial) {
       const slot = index++;
@@ -38,7 +47,11 @@ function panel(fetch) {
       }
     },
   };
-  const document = { body: {}, addEventListener() {}, removeEventListener() {} };
+  const document = {
+    body: {},
+    addEventListener(name, handler) { documentListeners.set(name, handler); },
+    removeEventListener(name) { documentListeners.delete(name); },
+  };
   const window = { innerWidth: 1000, addEventListener() {}, removeEventListener() {}, __ModuleLoader__: { load(module) {
     const plugin = module.factory(name => name === 'react' ? React : { createPortal: element => element });
     plugin.apply({ locale: { subscribe() {}, getSnapshot() {}, bind: () => key => key, register() {} },
@@ -61,6 +74,7 @@ function panel(fetch) {
     render,
     button: className => find(render(), node => node.props.className === className),
     find: predicate => find(render(), predicate),
+    documentEvent(name, event) { documentListeners.get(name)?.(event); },
     timeout() { const callbacks = [...timers.values()]; timers.clear(); callbacks.forEach(fn => fn()); },
     unmount() { hooks.forEach(hook => hook?.cleanup?.()); },
     timerCount: () => timers.size,
@@ -93,6 +107,47 @@ for (const stage of ['fetch', 'body']) {
     stalled.resolve(stage === 'fetch' ? { ok: true, json: async () => ({ claude: { status: 'old' } }) } : { claude: { status: 'old' } });
     await settle();
     assert.equal(ui.find(node => node.props.name === 'Claude').props.data.status, 'new');
+    assert.equal(ui.timerCount(), 0);
+    ui.unmount();
+  });
+}
+
+for (const close of ['trigger', 'Escape', 'outside click']) {
+  test(`closing with ${close} cancels usage so reopening starts a fresh request`, async () => {
+    const first = deferred();
+    const requests = [];
+    const ui = panel((url, options) => {
+      requests.push(options);
+      return requests.length === 1
+        ? first.promise
+        : Promise.resolve({ ok: true, json: async () => ({ claude: { status: 'fresh' } }) });
+    });
+    ui.button('usage-panel-trigger').props.onClick();
+    ui.render();
+    await settle();
+    assert.equal(requests.length, 1);
+    assert.equal(ui.timerCount(), 1);
+
+    if (close === 'trigger') {
+      ui.button('usage-panel-trigger').props.onClick();
+    } else if (close === 'Escape') {
+      ui.documentEvent('keydown', { key: 'Escape' });
+    } else {
+      ui.documentEvent('pointerdown', { target: {} });
+    }
+    assert.equal(requests[0].signal.aborted, true);
+    assert.equal(ui.timerCount(), 0);
+
+    ui.render();
+    await settle();
+    ui.button('usage-panel-trigger').props.onClick();
+    ui.render();
+    await settle();
+    assert.equal(requests.length, 2);
+    assert.equal(ui.find(node => node.props.name === 'Claude').props.data.status, 'fresh');
+    first.resolve({ ok: true, json: async () => ({ claude: { status: 'stale' } }) });
+    await settle();
+    assert.equal(ui.find(node => node.props.name === 'Claude').props.data.status, 'fresh');
     assert.equal(ui.timerCount(), 0);
     ui.unmount();
   });

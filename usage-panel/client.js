@@ -61,13 +61,20 @@ window.__ModuleLoader__.load({
       const inFlight = React.useRef(null);
       const mounted = React.useRef(true);
 
+      function cancelUsage() {
+        const request = inFlight.current;
+        inFlight.current = null;
+        if (request) request.cancel();
+      }
+      function closePanel() {
+        cancelUsage();
+        setOpen(false);
+      }
       React.useEffect(() => {
         mounted.current = true;
         return () => {
           mounted.current = false;
-          const request = inFlight.current;
-          inFlight.current = null;
-          if (request) request.cancel();
+          cancelUsage();
         };
       }, []);
       React.useEffect(() => {
@@ -82,10 +89,10 @@ window.__ModuleLoader__.load({
           setPosition({ top: Math.max(8, anchor.top - panel.height - 8), left: Math.max(8, Math.min(anchor.right - panel.width, window.innerWidth - panel.width - 8)) });
         }
         function outside(event) {
-          if (!trigger.current?.contains(event.target) && !popover.current?.contains(event.target)) setOpen(false);
+          if (!trigger.current?.contains(event.target) && !popover.current?.contains(event.target)) closePanel();
         }
         function keydown(event) {
-          if (event.key === 'Escape') { setOpen(false); trigger.current?.focus(); }
+          if (event.key === 'Escape') { closePanel(); trigger.current?.focus(); }
         }
         place();
         document.addEventListener('pointerdown', outside);
@@ -137,8 +144,8 @@ window.__ModuleLoader__.load({
         }
       }
       function toggle() {
-        if (!open) refresh();
-        setOpen(!open);
+        if (open) closePanel();
+        else { refresh(); setOpen(true); }
       }
       return h(React.Fragment, null,
         h('style', null, styles),

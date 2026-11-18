@@ -488,6 +488,7 @@ export async function runGeminiImageTask({ task, images, cwd, model, signal, onT
   const lines = createInterface({ input: child.stdout, crlfDelay: Infinity })
   const pending = new Map()
   let nextID = 0
+  let sessionID
   let responseText = ""
   let responseBytes = 0
   let failure
@@ -507,28 +508,33 @@ export async function runGeminiImageTask({ task, images, cwd, model, signal, onT
     if (failure) return
     try {
       const message = parseAcpMessage(line)
-      if (!message || typeof message !== "object" || Array.isArray(message)) throw new Error(ACP_PROTOCOL_MESSAGE)
-      if (message.method === "session/update") {
-        const update = message.params?.update
-        if (update?.sessionUpdate === "agent_message_chunk" && update.content?.type === "text") {
-          const text = update.content.text
-          if (typeof text !== "string" || text === "") return
-          responseBytes += Buffer.byteLength(text)
-          if (responseBytes > MAX_OUTPUT_BYTES) throw new Error(OUTPUT_LIMIT_MESSAGE)
-          responseText += text
-          onText?.(text)
-        }
-      } else if (message.method && message.id !== undefined) {
+      if (!message || typeof message !== "object" || Array.isArray(message) || message.jsonrpc !== "2.0") {
+        throw new Error(ACP_PROTOCOL_MESSAGE)
+      }
+      if (typeof message.method === "string" && message.id !== undefined) {
         // Never auto-approve a request we cannot display through OpenCode.
         child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: message.id, error: { code: -32601, message: "Client method unavailable" } })}\n`)
-      } else if (message.id !== undefined && pending.has(message.id)) {
+      } else if (message.method === "session/update") {
+        if (typeof sessionID !== "string" || message.params?.sessionId !== sessionID) return
+        const update = message.params.update
+        if (update?.sessionUpdate !== "agent_message_chunk" || update.content?.type !== "text") return
+        const text = update.content.text
+        if (typeof text !== "string" || text === "") return
+        responseBytes += Buffer.byteLength(text)
+        if (responseBytes > MAX_OUTPUT_BYTES) throw new Error(OUTPUT_LIMIT_MESSAGE)
+        responseText += text
+        onText?.(text)
+      } else if (message.id !== undefined) {
+        if (!pending.has(message.id)) throw new Error(ACP_PROTOCOL_MESSAGE)
+        const hasResult = Object.hasOwn(message, "result")
+        const hasError = Object.hasOwn(message, "error")
+        if (hasResult === hasError) throw new Error(ACP_PROTOCOL_MESSAGE)
         const entry = pending.get(message.id)
         pending.delete(message.id)
-        if (message.error) {
+        if (hasError) {
           entry.reject(new Error("Gemini CLI ACP request failed."))
-        }
-        else entry.resolve(message.result)
-      }
+        } else entry.resolve(message.result)
+      } else if (typeof message.method !== "string") throw new Error(ACP_PROTOCOL_MESSAGE)
     } catch (error) { fail(error) }
   })
   const request = (method, params) => new Promise((resolve, reject) => {
@@ -546,7 +552,8 @@ export async function runGeminiImageTask({ task, images, cwd, model, signal, onT
     }
     const session = await request("session/new", { cwd: resolve(cwd), mcpServers: [] })
     if (typeof session?.sessionId !== "string") throw new Error("Gemini CLI ACP did not return a session ID.")
-    const result = await request("session/prompt", { sessionId: session.sessionId, prompt: [{ type: "text", text: task }, ...images] })
+    sessionID = session.sessionId
+    const result = await request("session/prompt", { sessionId: sessionID, prompt: [{ type: "text", text: task }, ...images] })
     if (result?.stopReason !== "end_turn") {
       throw new Error("Gemini CLI ACP stopped before completing the request.")
     }

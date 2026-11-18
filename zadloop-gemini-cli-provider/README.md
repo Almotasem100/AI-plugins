@@ -10,7 +10,7 @@ Adds `gemini-cli` as a selectable ZadLoop model provider with two models: `gemin
 
 ## Install
 
-Install this directory as a local bundle through ZadLoop's Plugin Manager. The bundle registers the `gemini-cli` LLM route and the `gemini_flash_subagent` and `gemini_pro_subagent` tools. Ask ZadLoop to use the tool matching the desired model for a self-contained task; the parent receives the result through the normal subagent completion flow. Delegated work does not inherit the parent's full conversation or support follow-up messages. For ordinary model calls, choose a model or the Flash default alias in model selection.
+Install or remove this local bundle through ZadLoop's Plugin Manager. The bundle registers the `gemini-cli` LLM route and the `gemini_flash_subagent` and `gemini_pro_subagent` tools. Ask ZadLoop to use the tool matching the desired model for a self-contained task; the parent receives the result through the normal subagent completion flow. Delegated work does not inherit the parent's full conversation or support follow-up messages. For ordinary model calls, choose a model or the Flash default alias in model selection.
 
 ## Important behavior
 
@@ -23,7 +23,7 @@ Install this directory as a local bundle through ZadLoop's Plugin Manager. The b
   text and an `end_turn` stop reason. Both paths reject cumulative output over 16 MiB.
   If text was already delivered before a later terminal failure, the stream still
   ends with an error rather than a successful finish.
-- Error messages use fixed safe classifications where the protocol or process boundary supplies enough evidence: authentication, quota/rate limit, configuration/input, protocol, and process exit. Raw stderr and arbitrary structured-provider diagnostics are not included in host-visible errors. This avoids claiming that regex redaction can guarantee confidentiality.
+- Error messages use fixed classifications where the protocol or process boundary supplies enough evidence: authentication, quota/rate limit, configuration/input, protocol, and process exit. Raw stderr and arbitrary structured-provider diagnostics are not included in host-visible errors.
 - ACP limitation: Gemini CLI can map underlying failures such as token exhaustion or safety blocking to `stopReason: "end_turn"`. The adapter cannot distinguish those cases from a complete non-empty answer when ACP hides the cause, so a truncated response may appear complete.
 - The adapter does not report token usage or translate ZadLoop reasoning-effort settings.
 - The catalog contains `gemini-3.8-flash`, `gemini-3.1-pro-preview`, and the Flash alias `default`; every call passes the concrete model ID explicitly to Gemini CLI. Delegation uses `gemini_flash_subagent` for Flash or `gemini_pro_subagent` for Pro Preview.
@@ -47,7 +47,7 @@ The previous claim that host session identity, tool results, or a host execution
 
 ## Host compatibility
 
-The declared peer range keeps `@deepseek-ai/dsh-llm` `0.2.1-rc.2`, `0.2.2-rc.1`, and adds `0.2.2-rc.2` for the reported DSH `0.2.2-rc.2` warning.
+The package declares `@deepseek-ai/dsh-llm` `0.2.1-rc.2`, `0.2.2-rc.1`, or `0.2.2-rc.2` as a peer dependency. This is not a live-tested compatibility matrix.
 
 The addition is based on a read-only comparison of the published packages, not a live DSH runtime:
 
@@ -62,4 +62,4 @@ The addition is based on a read-only comparison of the published packages, not a
 npm test
 ```
 
-Tests are offline and use fake subprocess/CLI boundaries. They cover incremental text and image chunks, split UTF-8, cumulative output limits, nonfatal warnings, terminal errors after partial output, redaction, cancellation, early consumer close, model aliases, and rejected ACP client requests. They do not make a live Gemini request or start a real ZadLoop host.
+Tests are offline and use fake subprocess/CLI boundaries. They cover incremental text and image chunks, split UTF-8, cumulative output limits, nonfatal warnings, terminal errors after partial output, diagnostic sanitization, cancellation, early consumer close, model aliases, and rejected ACP client requests. They do not make a live Gemini request or start a real ZadLoop host.

@@ -20,5 +20,12 @@ const previous = await readFile(output, "utf8").catch(error => {
   if (error.code !== "ENOENT") throw error
   return null
 })
-if (bundle !== previous) await writeFile(output, bundle)
-console.log("Built Donald Duck client with embedded PNG.")
+if (process.argv.includes("--check")) {
+  if (bundle !== previous) {
+    throw new Error("client.js is missing or stale. Run npm run build in donald-duck and commit the generated file.")
+  }
+  console.log("Donald Duck client bundle is up to date.")
+} else {
+  if (bundle !== previous) await writeFile(output, bundle)
+  console.log("Built Donald Duck client with embedded PNG.")
+}

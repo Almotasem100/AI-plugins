@@ -13,7 +13,7 @@ The bundle package ID is `@local/donald-duck`. Node.js 20 or later is required f
 
 ## Install
 
-Install this directory as a local bundle through ZadLoop's Plugin Manager. The profile links to this checkout, so reinstall the bundle from the new path if you move the repository.
+Install this directory as a local bundle through ZadLoop's Plugin Manager. Remove the bundle from the same profile to stop showing the overlay. The profile links to this checkout, so reinstall the bundle from the new path if you move the repository.
 
 ## Artwork and build
 
@@ -23,4 +23,4 @@ The artwork is user-supplied, not original plugin artwork; obtain appropriate ri
 
 ## Test
 
-Run `npm test` from this directory; it rebuilds the client first. Checks cover bundle metadata, the displayed PNG bytes, disabled native image dragging, and interaction regressions using React/browser boundary doubles: element dimensions, grab offsets, window edges, multiple pointers, release, focus-loss cancellation, keyboard movement, resizing, and listener cleanup. These checks do not render the overlay or verify mouse interaction in the running app.
+Run `npm test` from this directory. It checks that the committed `client.js` matches the source and artwork without rewriting it. After editing either input, run `npm run build` and include the regenerated file in your change. The offline tests cover bundle metadata, displayed PNG bytes, and pointer and keyboard movement, resizing, and listener cleanup with browser and React doubles. They do not render the overlay in ZadLoop.
