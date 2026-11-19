@@ -6,6 +6,7 @@
 - The root `package.json` runs checks; it does not install the plugins as a workspace. Avoid runtime imports from sibling plugins. Similar features may use different host APIs, authorization, or lifecycle rules; share behavior only if both packages can still be installed independently.
 - Keep host registration, authentication, and UI at their respective boundaries. In usage panels, credentials stay server-side; only sanitized results reach the UI. Use fake processes, fetch implementations, and host doubles in automated tests.
 - Keep OpenCode Desktop's `gui-experimental.cjs` entries self-contained. If you change the usage panel RPC, update both its server definition in `opencode-usage-panel/src/rpc.js` and the GUI copy. The offline GUI suite checks that their schemas match.
+- The two Gemini packages carry identical copies of the standalone doctor and its tests so either package can be used independently. Update both copies together; root `npm test` checks their parity.
 - Keep experimental work out of the production entry points. For current setup and behavior, use the plugin README and source. Existing `HANDOFF.md`, `IMPLEMENTATION.md`, and `TASK-CONTEXT.md` files retain dated verification evidence and design context; they do not establish compatibility with new host releases.
 
 ## Adding a plugin

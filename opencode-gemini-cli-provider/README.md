@@ -122,6 +122,36 @@ correlation, cancellation, and permission behavior.
 - Investigate mid-request steering when host and Gemini interfaces can support it without cancelling or replacing
   the active request.
 
+## Doctor
+
+Run the standalone diagnostic from this package directory:
+
+```sh
+npm run doctor
+```
+
+It invokes only `gemini --version` and `gemini --acp` with a single ACP `initialize` exchange, then exits.
+The doctor does not create a session, send a prompt, enable YOLO approval, inspect credentials, or print raw child
+diagnostics. It launches the installed CLI with its normal environment; the CLI controls its own startup behavior.
+Ordinary provider behavior is unchanged.
+
+Output reports the trimmed semantic version token, ACP initialize status, and advertised image input as
+`supported`, `unsupported`, or `unknown`. `supported` requires `image: true`; `false` or an omitted capability in a
+valid handshake is `unsupported`; an invalid capability advertisement or an invalid/unconfirmed initialize fails the
+check and reports `unknown`. The command exits zero only when version, handshake, and cleanup all succeed, so an
+explicit lack of image support alone still exits zero. It does not infer authentication, quota, model availability,
+or image delivery.
+
+Each stage is time-bounded, output is size-limited, and processes are terminated with bounded cleanup. Unconfirmed
+termination is reported rather than treated as success.
+
+PATH scope: discovery accepts only absolute, user-configured PATH directories outside this package and skips npm's
+injected `node_modules/.bin` entries. Symlinked candidates are resolved before containment checks. On Windows the
+standard npm layout (`gemini.cmd` plus `node_modules/@google/gemini-cli/bundle/gemini.js`) is launched through
+`node.exe` without a shell; on POSIX a resolved executable is launched directly. This verifies the diagnostic
+process's own PATH resolution, not a host application's Gemini lookup, and PATH remains a trust input rather than
+a sandbox.
+
 ## Development
 
 ```sh

@@ -5,7 +5,8 @@
   "type": "module",
   "engines": { "node": ">=20.3.0" },
   "scripts": {
-    "test": "node test/smoke.js && node --experimental-loader ./test/llm-loader.js --test test/adapter.test.js"
+    "doctor": "node src/doctor.js",
+    "test": "node test/smoke.js && node --experimental-loader ./test/llm-loader.js --test test/adapter.test.js && node --test test/doctor.test.js"
   },
   "exports": {
     ".": "./src/index.js",

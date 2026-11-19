@@ -8,6 +8,7 @@
     ".": "./src/index.js"
   },
   "scripts": {
+    "doctor": "node src/doctor.js",
     "test": "node --test"
   },
   "engines": {

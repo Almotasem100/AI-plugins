@@ -1,6 +1,8 @@
 # Subscription usage
 
-A ZadLoop bundle that shows Claude and ChatGPT subscription usage beside the context indicator. Open the panel to fetch the current 5-hour and weekly limits; use Refresh to request them again. Closing the panel cancels its pending client request. It does not poll or involve a model.
+A ZadLoop bundle that shows Claude and ChatGPT subscription usage beside the context indicator. Open the panel to fetch the current 5-hour and weekly limits; use Refresh to request them again.
+
+A successful response replaces the displayed result and records when it was checked (**Last checked**). While a refresh is pending, the previous result stays visible. If a refresh fails, times out, or returns an unrecognized response, that previous result stays visible and is marked **Stale**; a failure before the first result shows the load error instead. A later valid response always replaces the whole result, including providers that report not signed in, an expired session, unavailable usage, or an unrecognized response; per-provider windows are never kept across statuses. The client rejects responses with an unknown provider status or with malformed window data, and it renders only the fixed status messages, percentages, and reset times, never raw provider diagnostics. Closing the panel cancels its pending request and discards the displayed result, so reopening starts a fresh request and shows no old data. It does not poll or involve a model, and it keeps no stored copy.
 
 The panel needs both windows from a provider. If either is missing or malformed, that provider's response is reported as unrecognized.
 
