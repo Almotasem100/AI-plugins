@@ -1,0 +1,43 @@
+{
+  "schema": "v4-batch-01-synthetic-route-cases-v1",
+  "routes": [
+    {
+      "case": "image-input",
+      "required": ["image"],
+      "candidate": "opencode-gemini-cli-provider",
+      "documentedImageTypes": ["PNG", "JPEG", "WebP", "GIF"],
+      "evidence": "provider README documents ACP image input; offline tests use fake Gemini"
+    },
+    {
+      "case": "host-controlled-tools",
+      "required": ["host-approval", "host-tool-results"],
+      "candidate": "opencode-gemini-cli-provider",
+      "geminiApprovalMode": "yolo",
+      "hostBridge": false,
+      "decision": "reject-as-host-controlled-route"
+    },
+    {
+      "case": "independent-read-only-review",
+      "required": ["independent-review", "enforced-read-only"],
+      "candidate": "gemini-native-tool-loop",
+      "geminiApprovalMode": "yolo",
+      "hostApprovalEnforced": false,
+      "osIsolationVerified": false,
+      "decision": "blocked-unverified-containment"
+    },
+    {
+      "case": "ordinary-synthetic-text-summary",
+      "required": ["text"],
+      "candidate": "configured-low-cost-specialist",
+      "modelCallsObservedForCase": 0,
+      "decision": "candidate-only-no-model-dispatched"
+    }
+  ],
+  "quotaEvidence": {
+    "nativeGeminiSubagentDispatchesRequested": 1,
+    "tokenCountsObserved": false,
+    "priceObserved": false,
+    "remainingQuotaObserved": false,
+    "latencyMeasured": false
+  }
+}
