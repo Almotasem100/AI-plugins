@@ -1,5 +1,7 @@
 # V4 improvement register — AI-plugins (planning only)
 
+See [harness-engineering and skills/testing follow-up](HARNESS-RESEARCH-FOLLOWUP.md) for researched incremental enhancements, source limits, and deferred MCP/plugin choices. No implementation or installations are authorized by that log.
+
 See [five-article audit and executor queue](FIVE-ARTICLE-AUDIT.md) for source-based recommendations, concrete candidate deltas, non-duplicates, reviewer pushback rules, and new external discovery. This register preserves the broader V3 baseline; the linked audit is the actionable research handoff.
 
 > Research proposals, **not** live plugin instructions or an approved development backlog. Each top-level plugin stays independently installable per `CONTRIBUTING.md`. No code, permission, model, authentication, deployment, installation or host configuration change is authorized by this register.
