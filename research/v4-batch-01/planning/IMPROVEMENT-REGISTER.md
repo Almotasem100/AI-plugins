@@ -1,5 +1,7 @@
 # V4 improvement register — AI-plugins (planning only)
 
+See [five-article audit and executor queue](FIVE-ARTICLE-AUDIT.md) for source-based recommendations, concrete candidate deltas, non-duplicates, reviewer pushback rules, and new external discovery. This register preserves the broader V3 baseline; the linked audit is the actionable research handoff.
+
 > Research proposals, **not** live plugin instructions or an approved development backlog. Each top-level plugin stays independently installable per `CONTRIBUTING.md`. No code, permission, model, authentication, deployment, installation or host configuration change is authorized by this register.
 
 ## Architectural boundaries
@@ -26,11 +28,11 @@
 
 | Source | Candidate connection | Status |
 | --- | --- | --- |
-| R-01 Anthropic effective agents | Route only when implementation permissions/capabilities meet the engineering outcome; don't import workflow logic into provider adapter. | **Awaiting discussion** |
-| R-02 Anthropic multi-agent research | Investigate communication/role costs only if actual plugin limitation blocks a desired bounded delegation workflow. | **Awaiting discussion** |
-| R-03 Claude verification article | Provider may expose trusted execution result metadata; genuine verification policy remains in AI-skills/project. | **Awaiting discussion** |
-| R-04 Marmelab survey | Evaluate targeted observability/evals if a measurable reliability gap occurs; respect security and telemetry minimization. | **Awaiting discussion** |
-| R-05 software factory article | Host-level mechanisms may be relevant, but importing an autonomous daemon/plugin framework is not assumed. | **Source audit pending** |
+| R-01 Anthropic effective agents | Route only when implementation permissions/capabilities meet the engineering outcome; don't import workflow logic into provider adapter. | **Architectural direction settled in AI-skills; executor check linked audit for real project/plugin delta** |
+| R-02 Anthropic multi-agent research | Investigate communication/role costs only if actual plugin limitation blocks a desired bounded delegation workflow. | **Architectural direction settled in AI-skills; executor check linked audit for real project/plugin delta** |
+| R-03 Claude verification article | Provider may expose trusted execution result metadata; genuine verification policy remains in AI-skills/project. | **Architectural direction settled in AI-skills; executor check linked audit for real project/plugin delta** |
+| R-04 Marmelab survey | Evaluate targeted observability/evals if a measurable reliability gap occurs; respect security and telemetry minimization. | **Architectural direction settled in AI-skills; executor check linked audit for real project/plugin delta** |
+| R-05 software factory article | Host-level mechanisms may be relevant, but importing an autonomous daemon/plugin framework is not assumed. | **Indexed article audited in linked action queue; no daemon adoption** |
 
 ## Implementer challenge / review instructions
 
