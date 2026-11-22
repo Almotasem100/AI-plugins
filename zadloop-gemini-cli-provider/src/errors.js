@@ -11,14 +11,14 @@ function classified(message, type) {
   if (/FatalAuthenticationError|ACCOUNT_SIGN_IN_REQUIRED|ACCOUNT_TOKEN_INVALID|\bAUTH\b|authenticat|sign in|log in|login|credential/i.test(haystack)) {
     return "Gemini CLI authentication failed. Sign in by running `gemini` in a terminal, then retry."
   }
-  if (/\b(?:context|stream|request|rpc|grpc|network)\s+cancell?ed\b|cancell?ed\s+by\s+(?:upstream|server|remote)/i.test(haystack)) {
+  if (/RESOURCE_EXHAUSTED|\bquota\b|rate.?limit|\b429\b/i.test(haystack)) {
+    return "Gemini CLI quota or rate limit reached. Wait and retry, or check your Gemini plan."
+  }
+  if (/\b(?:context|stream|rpc|grpc|network)\s+cancell?ed\b|cancell?ed\s+by\s+(?:upstream|server|remote)/i.test(haystack)) {
     return "Gemini CLI upstream request was interrupted or cancelled."
   }
   if (/FatalCancellationError|cancelled|canceled/i.test(haystack)) {
     return "Gemini CLI reported that the request was cancelled."
-  }
-  if (/RESOURCE_EXHAUSTED|\bquota\b|rate.?limit|\b429\b/i.test(haystack)) {
-    return "Gemini CLI quota or rate limit reached. Wait and retry, or check your Gemini plan."
   }
   if (/FatalConfigError|FatalInputError|FatalSandboxError|invalid (?:config|setting)|config.*(?:error|invalid)/i.test(haystack)) {
     return "Gemini CLI rejected its configuration or input. Check the Gemini CLI setup and working directory."

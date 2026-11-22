@@ -37,17 +37,29 @@ function readOutput(handle, stream, maxBytes) {
 }
 
 function classifyHostAbort(reason) {
-  const name = typeof reason?.name === "string" ? reason.name : ""
-  const code = typeof reason?.code === "string" ? reason.code : ""
-  const message = typeof reason?.message === "string" ? reason.message : (typeof reason === "string" ? reason : "")
-  const haystack = `${name} ${code} ${message}`
-  if (/RemoteStreamCarrierError|websocket|remote stream|carrier|disconnect|connection closed|socket closed/i.test(haystack)) {
-    return "Gemini task was interrupted because the ZadLoop connection closed."
-  }
-  if (/TimeoutError|timed?\s*out|deadline/i.test(haystack)) {
-    return "Gemini task timed out in ZadLoop."
+  let current = reason
+  for (let depth = 0; depth < 4 && current !== undefined && current !== null; depth += 1) {
+    const name = typeof current?.name === "string" ? current.name : ""
+    const code = typeof current?.code === "string" ? current.code : ""
+    const message = typeof current?.message === "string" ? current.message : (typeof current === "string" ? current : "")
+    const haystack = `${name} ${code} ${message}`
+    if (/RemoteStreamCarrierError|websocket|remote stream|carrier|disconnect|connection closed|socket closed/i.test(haystack)) {
+      return "Gemini task was interrupted because the ZadLoop connection closed."
+    }
+    if (/TimeoutError|timed?\s*out|deadline/i.test(haystack)) {
+      return "Gemini task timed out in ZadLoop."
+    }
+    current = typeof current === "object" ? current.cause : undefined
   }
   return "Gemini task was cancelled."
+}
+
+function resolveTimeoutMs(timeoutMs) {
+  if (timeoutMs === undefined) return DEFAULT_TIMEOUT_MS
+  if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    throw new RangeError("timeoutMs must be a positive finite number.")
+  }
+  return Math.min(Math.floor(timeoutMs), DEFAULT_TIMEOUT_MS)
 }
 
 function abortError(signal, timeoutSignal, timeoutMs = DEFAULT_TIMEOUT_MS) {
@@ -232,10 +244,11 @@ function failed(primary, cleanupError) {
  * wrapper owns abort handling, process termination, and cleanup reporting so
  * text and ACP paths cannot drift on cancellation.
  */
-async function* runManagedTask({ subprocess, signal, timeoutMs = DEFAULT_TIMEOUT_MS, createSpec, body }) {
-  const timeoutSignal = AbortSignal.timeout(timeoutMs)
+async function* runManagedTask({ subprocess, signal, timeoutMs, createSpec, body }) {
+  const effectiveTimeoutMs = resolveTimeoutMs(timeoutMs)
+  const timeoutSignal = AbortSignal.timeout(effectiveTimeoutMs)
   const executionSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal
-  const getAbortError = () => abortError(signal, timeoutSignal, timeoutMs)
+  const getAbortError = () => abortError(signal, timeoutSignal, effectiveTimeoutMs)
   let handle
   let failure
   const onAbort = () => {
@@ -257,7 +270,7 @@ async function* runManagedTask({ subprocess, signal, timeoutMs = DEFAULT_TIMEOUT
       onAbort()
       throw getAbortError()
     }
-    yield* body({ handle, signal, executionSignal, timeoutSignal, timeoutMs, getAbortError })
+    yield* body({ handle, signal, executionSignal, timeoutSignal, timeoutMs: effectiveTimeoutMs, getAbortError })
   } catch (error) {
     const interrupted = error === executionSignal.reason
       || error?.name === "AbortError"
