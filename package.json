@@ -3,6 +3,6 @@
   "private": true,
   "engines": { "node": ">=20.3.0" },
   "scripts": {
-    "test": "npm --prefix donald-duck test && npm --prefix usage-panel test && npm --prefix opencode-usage-panel test && npm --prefix opencode-gemini-cli-provider test && npm --prefix zadloop-gemini-cli-provider test && npm --prefix opencode-desktop-themes test"
+    "test": "npm --prefix donald-duck test && npm --prefix usage-panel test && npm --prefix opencode-usage-panel test && npm --prefix opencode-gemini-cli-provider test && npm --prefix zadloop-gemini-cli-provider test && npm --prefix opencode-desktop-themes test && npm --prefix zadloop-workflow-dashboard test"
   }
 }

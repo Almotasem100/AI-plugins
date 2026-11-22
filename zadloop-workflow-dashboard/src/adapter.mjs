@@ -1,25 +1,64 @@
-import { readFile, stat } from "node:fs/promises"
+import { open, realpath } from "node:fs/promises"
 import { isAbsolute, relative, resolve, sep } from "node:path"
 
 const DEFAULT_STALE_MS = 24 * 60 * 60 * 1000
 const MAX_FILE_BYTES = 256 * 1024
+const PLACEHOLDER_BLOCKER = /^(?:none|n\/a|na|nil|nothing|no blockers?|[-–—]+)$/i
+const TERMINAL_STAGE = /^(?:completed?|done|closed)$/i
+const AUTHORITATIVE_MODEL_EVENTS = new Set(["assistant/message", "delegation/model-choice", "model/selection"])
 
-function resolveConfinedPath(workspaceRoot, targetPath) {
-  const root = resolve(workspaceRoot)
-  const resolved = isAbsolute(targetPath) ? resolve(targetPath) : resolve(root, targetPath)
-  const rel = relative(root, resolved)
-  if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
-    throw new Error("Evidence path must stay inside the approved workspace root.")
-  }
-  return { absolute: resolved, relative: rel.replaceAll("\\", "/") }
+function isInside(childPath, parentPath) {
+  const rel = relative(parentPath, childPath)
+  return rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel)
 }
 
-async function readBoundedText(filePath) {
-  const info = await stat(filePath)
-  if (!info.isFile()) throw new Error("Evidence target is not a regular file.")
-  if (info.size > MAX_FILE_BYTES) throw new Error("Evidence file exceeds size limit.")
-  const text = await readFile(filePath, "utf8")
-  return { text, mtimeMs: info.mtimeMs }
+function resolveLexicalPath(workspaceRoot, targetPath) {
+  const root = resolve(workspaceRoot)
+  const resolved = isAbsolute(targetPath) ? resolve(targetPath) : resolve(root, targetPath)
+  if (!isInside(resolved, root)) {
+    throw new Error("Evidence path must stay inside the approved workspace root.")
+  }
+  return { root, absolute: resolved, relative: relative(root, resolved).replaceAll("\\", "/") }
+}
+
+async function readConfinedText(workspaceRoot, targetPath) {
+  const lexical = resolveLexicalPath(workspaceRoot, targetPath)
+  const realRoot = await realpath(lexical.root)
+  let realTarget
+  try {
+    realTarget = await realpath(lexical.absolute)
+  } catch (error) {
+    if (error?.code === "ENOENT" || error?.code === "ENOTDIR") {
+      return { missing: true, relative: lexical.relative }
+    }
+    throw error
+  }
+  if (!isInside(realTarget, realRoot)) {
+    throw new Error("Evidence path escapes the approved workspace root through a link.")
+  }
+  // Open once and read through the handle to avoid stat -> readFile TOCTOU races.
+  const handle = await open(realTarget, "r")
+  try {
+    const info = await handle.stat()
+    if (!info.isFile()) throw new Error("Evidence target is not a regular file.")
+    if (info.size > MAX_FILE_BYTES) throw new Error("Evidence file exceeds size limit.")
+    const buffer = Buffer.alloc(MAX_FILE_BYTES + 1)
+    let total = 0
+    while (total < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, total, buffer.length - total, total)
+      if (bytesRead === 0) break
+      total += bytesRead
+    }
+    if (total > MAX_FILE_BYTES) throw new Error("Evidence file exceeds size limit.")
+    return {
+      missing: false,
+      relative: relative(realRoot, realTarget).replaceAll("\\", "/"),
+      text: buffer.subarray(0, total).toString("utf8"),
+      mtimeMs: info.mtimeMs,
+    }
+  } finally {
+    await handle.close()
+  }
 }
 
 function extractField(text, label) {
@@ -51,17 +90,19 @@ function detectWorkflowKind(text) {
 
 export function parseScratchpad(text, { sourcePath = "scratchpad.md", mtimeMs, nowMs = Date.now(), staleAfterMs = DEFAULT_STALE_MS } = {}) {
   const stage = extractField(text, "Stage")
-  const blockers = extractSectionBullets(text, "Blockers / open questions")
+  const rawBlockers = extractSectionBullets(text, "Blockers / open questions")
+  const blockers = rawBlockers.filter((item) => !PLACEHOLDER_BLOCKER.test(item))
   const completed = extractSectionBullets(text, "Completed / current state")
   const decisions = extractSectionBullets(text, "Material decisions")
   const verification = extractSectionBullets(text, "Verification state")
   const nextAction = extractSectionBullets(text, "Next action")
   const stale = typeof mtimeMs === "number" ? (nowMs - mtimeMs) > staleAfterMs : true
-  const status = blockers.length > 0
-    ? "Blocked"
-    : stage !== "Unknown"
-      ? (/complete|done|closed/i.test(stage) ? "Completed" : "Started (last reported)")
-      : "Unknown"
+  const stageStatus = stage === "Unknown"
+    ? "Unknown"
+    : TERMINAL_STAGE.test(stage)
+      ? "Completed (last reported)"
+      : "Started (last reported)"
+  const taskStatus = blockers.length > 0 ? "Blocked" : stageStatus
 
   return {
     sourcePath,
@@ -72,7 +113,9 @@ export function parseScratchpad(text, { sourcePath = "scratchpad.md", mtimeMs, n
     objective: extractField(text, "Objective"),
     activeItem: extractField(text, "Active item"),
     stage,
-    status,
+    stageStatus,
+    hasOpenBlockers: blockers.length > 0,
+    taskStatus,
     reposState: extractField(text, "Repos/state"),
     completed,
     decisions,
@@ -80,6 +123,32 @@ export function parseScratchpad(text, { sourcePath = "scratchpad.md", mtimeMs, n
     verificationNotes: verification,
     nextAction,
   }
+}
+
+function readXmlIntAttr(attrs, name) {
+  const match = attrs.match(new RegExp(`\\b${name}=["'](\\d+)["']`, "i"))
+  if (!match) return undefined
+  const value = Number.parseInt(match[1], 10)
+  return Number.isSafeInteger(value) && value >= 0 ? value : undefined
+}
+
+function parseJunitCounts(attrs) {
+  const total = readXmlIntAttr(attrs, "tests")
+  if (total === undefined) return undefined
+  const failures = readXmlIntAttr(attrs, "failures") ?? 0
+  const errors = readXmlIntAttr(attrs, "errors") ?? 0
+  const skipped = readXmlIntAttr(attrs, "skipped") ?? 0
+  const failed = failures + errors
+  if (failed + skipped > total) return undefined
+  return { total, passed: total - failed - skipped, failed, skipped }
+}
+
+function classifyCounts({ passed, failed, skipped, blocked = 0 }) {
+  if (failed > 0) return "Failed"
+  if (blocked > 0) return "Blocked"
+  if (passed > 0) return "Passed"
+  if (skipped > 0) return "Skipped"
+  return "Not Run"
 }
 
 export function parseTestReport(text, { sourcePath = "report", format } = {}) {
@@ -95,18 +164,9 @@ export function parseTestReport(text, { sourcePath = "report", format } = {}) {
       const skipped = Number.isInteger(data.skipped) && data.skipped >= 0 ? data.skipped : 0
       const blocked = Number.isInteger(data.blocked) && data.blocked >= 0 ? data.blocked : 0
       if (passed === undefined || failed === undefined) return unknownReport(sourcePath)
-      const status = failed > 0
-        ? "Failed"
-        : blocked > 0
-          ? "Blocked"
-          : passed > 0
-            ? "Passed"
-            : skipped > 0
-              ? "Skipped"
-              : "Not Run"
       return {
         sourcePath,
-        status,
+        status: classifyCounts({ passed, failed, skipped, blocked }),
         counts: { passed, failed, skipped, blocked },
         testedRevision: typeof data.commit === "string" && data.commit.trim() ? data.commit.trim() : "Unknown",
       }
@@ -116,31 +176,40 @@ export function parseTestReport(text, { sourcePath = "report", format } = {}) {
   }
 
   if (detected === "junit") {
-    const suite = trimmed.match(/<testsuite\b([^>]*)>/i)
-    if (!suite) return unknownReport(sourcePath)
-    const attrs = suite[1]
-    const readInt = (name) => {
-      const m = attrs.match(new RegExp(`\\b${name}=["'](\\d+)["']`, "i"))
-      return m ? Number.parseInt(m[1], 10) : undefined
+    const wrapperMatch = trimmed.match(/<testsuites\b([^>]*)>/i)
+    const suiteMatches = [...trimmed.matchAll(/<testsuite\b([^>]*)>/gi)]
+    if (!wrapperMatch && suiteMatches.length === 0) return unknownReport(sourcePath)
+
+    let summed
+    if (suiteMatches.length > 0) {
+      summed = { total: 0, passed: 0, failed: 0, skipped: 0 }
+      for (const match of suiteMatches) {
+        const counts = parseJunitCounts(match[1])
+        if (!counts) return unknownReport(sourcePath)
+        summed.total += counts.total
+        summed.passed += counts.passed
+        summed.failed += counts.failed
+        summed.skipped += counts.skipped
+      }
     }
-    const total = readInt("tests")
-    const failures = readInt("failures") ?? 0
-    const errors = readInt("errors") ?? 0
-    const skipped = readInt("skipped") ?? 0
-    if (total === undefined) return unknownReport(sourcePath)
-    const failed = failures + errors
-    const passed = Math.max(0, total - failed - skipped)
-    const status = failed > 0
-      ? "Failed"
-      : passed > 0
-        ? "Passed"
-        : skipped > 0
-          ? "Skipped"
-          : "Not Run"
+
+    const wrapperCounts = wrapperMatch ? parseJunitCounts(wrapperMatch[1]) : undefined
+    if (wrapperMatch && !wrapperCounts && !summed) return unknownReport(sourcePath)
+    if (wrapperCounts && summed) {
+      if (
+        wrapperCounts.total !== summed.total
+        || wrapperCounts.failed !== summed.failed
+        || wrapperCounts.skipped !== summed.skipped
+      ) {
+        return unknownReport(sourcePath)
+      }
+    }
+    const finalCounts = summed ?? wrapperCounts
+    if (!finalCounts) return unknownReport(sourcePath)
     return {
       sourcePath,
-      status,
-      counts: { passed, failed, skipped, blocked: 0 },
+      status: classifyCounts({ ...finalCounts, blocked: 0 }),
+      counts: { passed: finalCounts.passed, failed: finalCounts.failed, skipped: finalCounts.skipped, blocked: 0 },
       testedRevision: "Unknown",
     }
   }
@@ -159,7 +228,13 @@ function unknownReport(sourcePath) {
 
 export function extractParticipantIdentity(assignment) {
   if (!assignment || typeof assignment !== "object") {
-    return { participant: "Unknown", configuredLane: "Unknown", executedModel: "Unknown", modelVerified: false }
+    return {
+      participant: "Unknown",
+      configuredLane: "Unknown",
+      executedModel: "Unknown",
+      modelVerified: false,
+      modelEvidenceSource: "Unknown",
+    }
   }
   const participant = typeof assignment.participant === "string" && assignment.participant.trim()
     ? assignment.participant.trim()
@@ -167,15 +242,24 @@ export function extractParticipantIdentity(assignment) {
   const configuredLane = typeof assignment.configuredLane === "string" && assignment.configuredLane.trim()
     ? assignment.configuredLane.trim()
     : "Unknown"
-  // Never infer executedModel from configuredLane; require explicit recorded execution evidence.
-  const executedModel = typeof assignment.executedModel === "string" && assignment.executedModel.trim()
-    ? assignment.executedModel.trim()
-    : "Unknown"
+
+  // Require an authoritative host session execution event before reporting an executed model as verified.
+  const evidence = assignment.modelEvidence
+  const hasAuthoritativeEvidence = Boolean(
+    evidence
+    && typeof evidence === "object"
+    && evidence.source === "host-session-event"
+    && AUTHORITATIVE_MODEL_EVENTS.has(evidence.eventType)
+    && typeof evidence.sessionId === "string" && evidence.sessionId.trim() !== ""
+    && Number.isInteger(evidence.seq) && evidence.seq >= 0
+    && typeof evidence.model === "string" && evidence.model.trim() !== "",
+  )
   return {
     participant,
     configuredLane,
-    executedModel,
-    modelVerified: executedModel !== "Unknown",
+    executedModel: hasAuthoritativeEvidence ? evidence.model.trim() : "Unknown",
+    modelVerified: hasAuthoritativeEvidence,
+    modelEvidenceSource: hasAuthoritativeEvidence ? `${evidence.eventType}@${evidence.sessionId}#${evidence.seq}` : "Unknown",
   }
 }
 
@@ -196,7 +280,9 @@ export async function collectDashboardSnapshot({
     objective: "Unknown",
     activeItem: "Unknown",
     stage: "Unknown",
-    status: "Unknown",
+    stageStatus: "Unknown",
+    hasOpenBlockers: false,
+    taskStatus: "Unknown",
     reposState: "Unknown",
     completed: [],
     decisions: [],
@@ -206,24 +292,25 @@ export async function collectDashboardSnapshot({
   }
 
   if (scratchpadPath) {
-    const confined = resolveConfinedPath(workspaceRoot, scratchpadPath)
-    try {
-      const { text, mtimeMs } = await readBoundedText(confined.absolute)
-      workItem = parseScratchpad(text, { sourcePath: confined.relative, mtimeMs, nowMs, staleAfterMs })
-    } catch {
-      workItem.sourcePath = confined.relative
+    const read = await readConfinedText(workspaceRoot, scratchpadPath)
+    if (read.missing) {
+      workItem.sourcePath = read.relative
+    } else {
+      workItem = parseScratchpad(read.text, {
+        sourcePath: read.relative,
+        mtimeMs: read.mtimeMs,
+        nowMs,
+        staleAfterMs,
+      })
     }
   }
 
   let verification = unknownReport(testReportPath ?? "Unknown")
   if (testReportPath) {
-    const confined = resolveConfinedPath(workspaceRoot, testReportPath)
-    try {
-      const { text } = await readBoundedText(confined.absolute)
-      verification = parseTestReport(text, { sourcePath: confined.relative })
-    } catch {
-      verification = unknownReport(confined.relative)
-    }
+    const read = await readConfinedText(workspaceRoot, testReportPath)
+    verification = read.missing
+      ? unknownReport(read.relative)
+      : parseTestReport(read.text, { sourcePath: read.relative })
   }
 
   return {

@@ -1,6 +1,9 @@
 # ZadLoop Workflow Dashboard — Stage 1 (Feasibility & Read-Only Evidence Adapter)
 
-**Status:** Stage 1 only (host API feasibility + headless deterministic evidence adapter). **Stage 2 UI is not implemented and remains blocked pending Stage 1 evaluation and owner approval.**
+**Status:** Stage 1 only (host API feasibility + headless deterministic evidence adapter). **Not installable yet** — no ZadLoop bundle/client entry point exists in Stage 1, and **Stage 2 UI remains blocked pending Stage 1 evaluation and owner approval.**
+
+- **Target harness:** ZadLoop Desktop (`0.11.2` inspected read-only; no live host installation performed).
+- **Install / remove:** Not applicable in Stage 1 (offline Node module only; no external dependencies, credentials, or host permissions required).
 
 ## Design invariants preserved
 
