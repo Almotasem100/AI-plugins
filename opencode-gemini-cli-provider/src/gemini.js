@@ -71,7 +71,7 @@ function resultFailure(errorPayload, fallbackMessage = "Gemini CLI reported a fa
   if (/auth/i.test(type) || /authentication|not authenticated|login required|sign in/i.test(message)) {
     return authenticationFailure()
   }
-  if (/quota|rate.?limit|resource.?exhausted|\b429\b/i.test(combined)) return quotaFailure()
+  if (errorPayload?.code === 429 || /quota|rate.?limit|resource.?exhausted|\b429\b/i.test(combined)) return quotaFailure()
   if (/turn.?limit/i.test(type)) return turnLimitFailure()
   if (/tool/i.test(type)) return toolFailure()
   if (/input/i.test(type)) return inputFailure()
@@ -261,9 +261,9 @@ function isInside(directory, parent) {
   return pathFromParent !== ".." && !pathFromParent.startsWith(`..${sep}`) && !isAbsolute(pathFromParent)
 }
 
-async function isExecutable(file) {
+export async function isExecutable(file, accessFn = access) {
   try {
-    await access(file, process.platform === "win32" ? constants.F_OK : constants.X_OK)
+    await accessFn(file, process.platform === "win32" ? constants.F_OK : constants.X_OK)
     return true
   } catch (error) {
     if (error.code === "ENOENT" || error.code === "EACCES" || error.code === "EPERM" || error.code === "ENOTDIR") {

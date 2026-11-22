@@ -5,7 +5,7 @@ import { syncBuiltinESMExports } from "node:module"
 import { basename, delimiter, join } from "node:path"
 import { tmpdir } from "node:os"
 import test from "node:test"
-import { runGeminiImageTask, runGeminiTask, validateModel } from "../src/gemini.js"
+import { isExecutable, runGeminiImageTask, runGeminiTask, validateModel } from "../src/gemini.js"
 import { createGeminiLanguageModel } from "../src/provider.js"
 
 async function createFakeGemini(commandDirectory, cliSource) {
@@ -1211,7 +1211,7 @@ test("ACP classified provider errors report actionable fixed diagnostics without
         process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:message.id,result:{protocolVersion:1,agentCapabilities:{promptCapabilities:{image:true}}}})+'\\n')
       }
       if (message.method === 'session/new') {
-        process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:message.id,error:{code:429,message:${JSON.stringify(`RESOURCE_EXHAUSTED ${secretToken}`)}}})+'\\n')
+        process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:message.id,error:{code:429,message:${JSON.stringify(`Too many requests ${secretToken}`)}}})+'\\n')
       }
     })`
   const failure = await withFakeGemini(source, ({ projectDirectory }) =>
@@ -1220,6 +1220,25 @@ test("ACP classified provider errors report actionable fixed diagnostics without
 
   assert.match(failure.message, /quota or rate limit/i)
   assert.doesNotMatch(failure.message, /sk-secret-value/)
+})
+
+test("isExecutable ignores ENOENT, EACCES, EPERM, and ENOTDIR but rethrows unexpected access errors", async () => {
+  for (const code of ["ENOENT", "EACCES", "EPERM", "ENOTDIR"]) {
+    const allowed = await isExecutable("fake-path", async () => {
+      const err = new Error(`mock ${code}`)
+      err.code = code
+      throw err
+    })
+    assert.equal(allowed, false, code)
+  }
+  await assert.rejects(
+    isExecutable("fake-path", async () => {
+      const err = new Error("mock EIO")
+      err.code = "EIO"
+      throw err
+    }),
+    /mock EIO/,
+  )
 })
 
 test("PATH resolution skips an unusable file entry ahead of the real Gemini CLI", async () => {
