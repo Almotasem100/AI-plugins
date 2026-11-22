@@ -90,6 +90,12 @@ async function runHeadless() {
       streamResult()
       return
     }
+    case "stream-upstream-cancel": {
+      streamMessage("Partial")
+      streamResult("error", { type: "ERROR_EVENT", message: "rpc error: code = Canceled desc = context canceled" })
+      process.exitCode = 1
+      return
+    }
     default:
       throw new Error(`Unknown headless scenario: ${scenario}`)
   }

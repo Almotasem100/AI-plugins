@@ -46,7 +46,7 @@ function createTextQueue() {
   }
 }
 
-async function runAcpSession({ handle, task, images, cwd, signal, onText }) {
+async function runAcpSession({ handle, task, images, cwd, signal, getAbortError, onText }) {
   const { stdin, stdout, stderr } = handle
   if (!stdin || !stdout || !stderr) throw geminiProtocolFailure()
   const pending = new Map()
@@ -104,7 +104,7 @@ async function runAcpSession({ handle, task, images, cwd, signal, onText }) {
     else if (Object.hasOwn(message, "result")) entry.resolve(message.result)
     else entry.reject(geminiProtocolFailure())
   }
-  const onAbort = () => fail(new Error("Gemini task was cancelled."))
+  const onAbort = () => fail(getAbortError?.() ?? new Error("Gemini task was cancelled."))
   stderr.on("data", (chunk) => {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
     if (stderrBytes < MAX_ERROR_BYTES) stderrText += bytes.subarray(0, MAX_ERROR_BYTES - stderrBytes).toString("utf8")
@@ -157,7 +157,7 @@ async function runAcpSession({ handle, task, images, cwd, signal, onText }) {
  * process; closing this generator early aborts the ACP session and terminates
  * the process so no work continues behind a closed consumer.
  */
-export async function* streamAcpImageTask({ handle, task, images, cwd, signal }) {
+export async function* streamAcpImageTask({ handle, task, images, cwd, signal, getAbortError }) {
   const controller = new AbortController()
   const executionSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
   const queue = createTextQueue()
@@ -167,6 +167,7 @@ export async function* streamAcpImageTask({ handle, task, images, cwd, signal })
     images,
     cwd,
     signal: executionSignal,
+    getAbortError,
     onText: (chunk) => queue.push(chunk),
   })
   core.then(() => queue.end(), (error) => queue.fail(error))

@@ -6,6 +6,7 @@ import { PassThrough, Readable } from "node:stream"
 import { fileURLToPath } from "node:url"
 import test from "node:test"
 import { GeminiCliAdapter } from "../src/adapter.js"
+import { streamGeminiImageTask, streamGeminiTask } from "../src/gemini.js"
 import { readJsonLines } from "../src/json-lines.js"
 
 const fakeGemini = fileURLToPath(new URL("./fake-gemini.js", import.meta.url))
@@ -608,4 +609,68 @@ test("declared peer range keeps supported host versions and accepts rc.2", async
   const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"))
   const declared = pkg.peerDependencies["@deepseek-ai/dsh-llm"].split("||").map((entry) => entry.trim())
   for (const version of ["0.2.1-rc.2", "0.2.2-rc.1", "0.2.2-rc.2"]) assert.ok(declared.includes(version), version)
+})
+
+test("WebSocket disconnect abort is distinguished from user cancellation and preserves partial output", { timeout: 5000 }, async (t) => {
+  const f = fixture(t, "stream-slow")
+  const controller = new AbortController()
+  const iterator = f.adapter.stream(textOptions(controller.signal))[Symbol.asyncIterator]()
+  const first = await iterator.next()
+  assert.deepEqual(first.value, { type: "text-delta", index: 0, text: "First" })
+  const disconnect = new Error("api gateway: Remote stream WebSocket closed")
+  disconnect.name = "RemoteStreamCarrierError"
+  controller.abort(disconnect)
+  await assert.rejects(iterator.next(), /ZadLoop connection closed/)
+  assert.notEqual(f.child.signalCode, null)
+})
+
+test("host timeout abort is distinguished from user cancellation", { timeout: 5000 }, async (t) => {
+  const f = fixture(t, "stream-slow")
+  const controller = new AbortController()
+  const iterator = f.adapter.stream(textOptions(controller.signal))[Symbol.asyncIterator]()
+  await iterator.next()
+  const hostTimeout = new Error("Request timed out")
+  hostTimeout.name = "TimeoutError"
+  controller.abort(hostTimeout)
+  await assert.rejects(iterator.next(), /timed out in ZadLoop/)
+  assert.notEqual(f.child.signalCode, null)
+})
+
+test("provider bounded timeout reports timeout (not cancellation) on text and ACP paths and cleans up", { timeout: 5000 }, async (t) => {
+  const textF = fixture(t, "stream-slow")
+  const textIter = streamGeminiTask({
+    subprocess: textF.adapter.subprocess,
+    task: "hello",
+    cwd: resolve("fixture-project"),
+    model,
+    timeoutMs: 600,
+  })[Symbol.asyncIterator]()
+  const firstText = await textIter.next()
+  assert.equal(firstText.value, "First")
+  await assert.rejects(textIter.next(), /did not finish within 600 ms/)
+  assert.notEqual(textF.child.signalCode, null)
+
+  const acpF = fixture(t, "slow")
+  const acpIter = streamGeminiImageTask({
+    subprocess: acpF.adapter.subprocess,
+    task: "describe",
+    images: [{ type: "image", mimeType: "image/png", data: "AQID" }],
+    cwd: resolve("fixture-project"),
+    model,
+    timeoutMs: 600,
+  })[Symbol.asyncIterator]()
+  const firstAcp = await acpIter.next()
+  assert.equal(firstAcp.value, "First")
+  await assert.rejects(acpIter.next(), /did not finish within 600 ms/)
+  assert.notEqual(acpF.child.signalCode, null)
+})
+
+test("CLI upstream context cancellation is not misreported as user cancellation", { timeout: 5000 }, async (t) => {
+  const f = fixture(t, "stream-upstream-cancel")
+  const iterator = f.adapter.stream(textOptions(new AbortController().signal))[Symbol.asyncIterator]()
+  const first = await iterator.next()
+  assert.deepEqual(first.value, { type: "text-delta", index: 0, text: "Partial" })
+  const error = await iterator.next().catch((reason) => reason)
+  assert.match(error.message, /upstream request was interrupted or cancelled/i)
+  assert.doesNotMatch(error.message, /^Gemini task was cancelled\.$/)
 })

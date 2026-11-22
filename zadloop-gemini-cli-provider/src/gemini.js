@@ -36,9 +36,23 @@ function readOutput(handle, stream, maxBytes) {
   return output.text
 }
 
-function abortError(signal, timeoutSignal) {
-  if (signal?.aborted) return new Error("Gemini task was cancelled.")
-  if (timeoutSignal.aborted) return new Error(`Gemini CLI did not finish within ${DEFAULT_TIMEOUT_MS} ms.`)
+function classifyHostAbort(reason) {
+  const name = typeof reason?.name === "string" ? reason.name : ""
+  const code = typeof reason?.code === "string" ? reason.code : ""
+  const message = typeof reason?.message === "string" ? reason.message : (typeof reason === "string" ? reason : "")
+  const haystack = `${name} ${code} ${message}`
+  if (/RemoteStreamCarrierError|websocket|remote stream|carrier|disconnect|connection closed|socket closed/i.test(haystack)) {
+    return "Gemini task was interrupted because the ZadLoop connection closed."
+  }
+  if (/TimeoutError|timed?\s*out|deadline/i.test(haystack)) {
+    return "Gemini task timed out in ZadLoop."
+  }
+  return "Gemini task was cancelled."
+}
+
+function abortError(signal, timeoutSignal, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  if (signal?.aborted) return new Error(classifyHostAbort(signal.reason))
+  if (timeoutSignal?.aborted) return new Error(`Gemini CLI did not finish within ${timeoutMs} ms.`)
 }
 
 function isInside(directory, parent) {
@@ -193,11 +207,11 @@ async function terminateHandle(handle, requestTermination) {
   }
 }
 
-async function waitForOutcome(outcome, executionSignal, signal, timeoutSignal) {
-  if (executionSignal.aborted) throw abortError(signal, timeoutSignal)
+async function waitForOutcome(outcome, executionSignal, signal, timeoutSignal, timeoutMs = DEFAULT_TIMEOUT_MS) {
+  if (executionSignal.aborted) throw abortError(signal, timeoutSignal, timeoutMs)
   let onAbort
   const aborted = new Promise((_, reject) => {
-    onAbort = () => reject(abortError(signal, timeoutSignal))
+    onAbort = () => reject(abortError(signal, timeoutSignal, timeoutMs))
     executionSignal.addEventListener("abort", onAbort, { once: true })
   })
   try {
@@ -218,9 +232,10 @@ function failed(primary, cleanupError) {
  * wrapper owns abort handling, process termination, and cleanup reporting so
  * text and ACP paths cannot drift on cancellation.
  */
-async function* runManagedTask({ subprocess, signal, createSpec, body }) {
-  const timeoutSignal = AbortSignal.timeout(DEFAULT_TIMEOUT_MS)
+async function* runManagedTask({ subprocess, signal, timeoutMs = DEFAULT_TIMEOUT_MS, createSpec, body }) {
+  const timeoutSignal = AbortSignal.timeout(timeoutMs)
   const executionSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal
+  const getAbortError = () => abortError(signal, timeoutSignal, timeoutMs)
   let handle
   let failure
   const onAbort = () => {
@@ -231,8 +246,8 @@ async function* runManagedTask({ subprocess, signal, createSpec, body }) {
   executionSignal.addEventListener("abort", onAbort, { once: true })
 
   try {
-    const spec = await createSpec(executionSignal, () => abortError(signal, timeoutSignal))
-    if (executionSignal.aborted) throw abortError(signal, timeoutSignal)
+    const spec = await createSpec(executionSignal, getAbortError)
+    if (executionSignal.aborted) throw getAbortError()
     try {
       handle = subprocess.spawn({ ...spec, graceMs: 3000, signal: executionSignal })
     } catch {
@@ -240,15 +255,16 @@ async function* runManagedTask({ subprocess, signal, createSpec, body }) {
     }
     if (executionSignal.aborted) {
       onAbort()
-      throw abortError(signal, timeoutSignal)
+      throw getAbortError()
     }
-    yield* body({ handle, signal, executionSignal, timeoutSignal })
+    yield* body({ handle, signal, executionSignal, timeoutSignal, timeoutMs, getAbortError })
   } catch (error) {
     const interrupted = error === executionSignal.reason
       || error?.name === "AbortError"
+      || error?.name === "TimeoutError"
       || error?.code === "ERR_STREAM_PREMATURE_CLOSE"
     failure = executionSignal.aborted && interrupted
-      ? abortError(signal, timeoutSignal)
+      ? getAbortError()
       : error instanceof Error ? error : new Error(String(error))
   } finally {
     executionSignal.removeEventListener("abort", onAbort)
@@ -256,13 +272,13 @@ async function* runManagedTask({ subprocess, signal, createSpec, body }) {
       await terminateHandle(handle, requestTermination)
     } catch {
       const cleanupError = new Error("Gemini CLI cleanup failed.")
-      const primary = failure ?? abortError(signal, timeoutSignal)
+      const primary = failure ?? getAbortError()
       if (primary) throw failed(primary, cleanupError)
       throw cleanupError
     }
   }
   if (failure) throw failed(failure)
-  const aborted = abortError(signal, timeoutSignal)
+  const aborted = getAbortError()
   if (aborted) throw aborted
 }
 
@@ -327,7 +343,7 @@ function assertTextResult(state, settled, stderrText) {
   if (!state.text.trim()) throw new Error("Gemini CLI returned no response text.")
 }
 
-async function* streamTextBody({ handle, signal, executionSignal, timeoutSignal }) {
+async function* streamTextBody({ handle, signal, executionSignal, timeoutSignal, timeoutMs, getAbortError }) {
   const outcome = handle.done.then((value) => ({ value }), (error) => ({ error }))
   const stderr = collectStderr(handle)
   const state = { result: undefined, lastError: undefined, terminalError: undefined, text: "", textBytes: 0 }
@@ -335,14 +351,14 @@ async function* streamTextBody({ handle, signal, executionSignal, timeoutSignal 
     const chunk = applyStreamEvent(event, state)
     if (chunk) yield chunk
   }
-  const settled = await waitForOutcome(outcome, executionSignal, signal, timeoutSignal)
-  if (executionSignal.aborted) throw abortError(signal, timeoutSignal)
+  const settled = await waitForOutcome(outcome, executionSignal, signal, timeoutSignal, timeoutMs)
+  if (executionSignal.aborted) throw getAbortError()
   assertTextResult(state, settled, stderr())
 }
 
-async function* streamImageBody({ handle, task, images, cwd, signal, executionSignal, timeoutSignal }) {
-  yield* streamAcpImageTask({ handle, task, images, cwd, signal: executionSignal })
-  const aborted = abortError(signal, timeoutSignal)
+async function* streamImageBody({ handle, task, images, cwd, executionSignal, getAbortError }) {
+  yield* streamAcpImageTask({ handle, task, images, cwd, signal: executionSignal, getAbortError })
+  const aborted = getAbortError()
   if (aborted) throw aborted
 }
 
@@ -351,13 +367,14 @@ async function* streamImageBody({ handle, task, images, cwd, signal, executionSi
  * generator owns the process and terminates it when the consumer closes early.
  * A terminal `result` event decides success; warnings before it do not.
  */
-export async function* streamGeminiTask({ subprocess, task, cwd, model, signal }) {
+export async function* streamGeminiTask({ subprocess, task, cwd, model, signal, timeoutMs }) {
   assertTask(task)
   const selectedModel = validateModel(model)
-  if (signal?.aborted) throw new Error("Gemini task was cancelled.")
+  if (signal?.aborted) throw abortError(signal)
   yield* runManagedTask({
     subprocess,
     signal,
+    timeoutMs,
     createSpec: async (executionSignal, getAbortError) => {
       const command = await resolveCommand(
         subprocess,
@@ -389,14 +406,15 @@ export async function* streamGeminiTask({ subprocess, task, cwd, model, signal }
  * Stream assistant text deltas from one ACP image request. Images keep the ACP
  * path because headless stream-json has no image input.
  */
-export async function* streamGeminiImageTask({ subprocess, task, images, cwd, model, signal }) {
+export async function* streamGeminiImageTask({ subprocess, task, images, cwd, model, signal, timeoutMs }) {
   assertTask(task)
   assertImages(images)
   const selectedModel = validateModel(model)
-  if (signal?.aborted) throw new Error("Gemini task was cancelled.")
+  if (signal?.aborted) throw abortError(signal)
   yield* runManagedTask({
     subprocess,
     signal,
+    timeoutMs,
     createSpec: async (executionSignal, getAbortError) => {
       const command = await resolveCommand(
         subprocess,
