@@ -64,7 +64,7 @@ function configFailure() {
   return new Error("Gemini CLI could not start because of its configuration.")
 }
 
-function resultFailure(errorPayload) {
+function resultFailure(errorPayload, fallbackMessage = "Gemini CLI reported a failure.") {
   const type = typeof errorPayload?.type === "string" ? errorPayload.type : ""
   const message = typeof errorPayload?.message === "string" ? errorPayload.message : ""
   const combined = `${type} ${message}`
@@ -79,7 +79,7 @@ function resultFailure(errorPayload) {
   if (/untrusted|trust/i.test(type)) return workspaceFailure()
   if (/config/i.test(type)) return configFailure()
   if (/cancel/i.test(type)) return new Error(CANCELLED_MESSAGE)
-  return new Error("Gemini CLI reported a failure.")
+  return new Error(fallbackMessage)
 }
 
 function exitFailure(exitCode, exitSignal) {
@@ -266,7 +266,9 @@ async function isExecutable(file) {
     await access(file, process.platform === "win32" ? constants.F_OK : constants.X_OK)
     return true
   } catch (error) {
-    if (error.code === "ENOENT" || error.code === "EACCES") return false
+    if (error.code === "ENOENT" || error.code === "EACCES" || error.code === "EPERM" || error.code === "ENOTDIR") {
+      return false
+    }
     throw error
   }
 }
@@ -532,7 +534,7 @@ export async function runGeminiImageTask({ task, images, cwd, model, signal, onT
         const entry = pending.get(message.id)
         pending.delete(message.id)
         if (hasError) {
-          entry.reject(new Error("Gemini CLI ACP request failed."))
+          entry.reject(resultFailure(message.error, "Gemini CLI ACP request failed."))
         } else entry.resolve(message.result)
       } else if (typeof message.method !== "string") throw new Error(ACP_PROTOCOL_MESSAGE)
     } catch (error) { fail(error) }
@@ -558,6 +560,9 @@ export async function runGeminiImageTask({ task, images, cwd, model, signal, onT
       throw new Error("Gemini CLI ACP stopped before completing the request.")
     }
     if (failure) throw failure
+    if (!responseText.trim()) {
+      throw new Error("Gemini CLI ACP returned no response text.")
+    }
   } catch (error) {
     requestFailure = error
   } finally {
