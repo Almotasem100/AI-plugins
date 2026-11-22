@@ -157,6 +157,16 @@ function parseJunitCounts(attrs, { requireFailures = true } = {}) {
   return { total: total.value, passed: total.value - failed - s, failures: f, errors: e, failed, skipped: s }
 }
 
+function hasInvalidWrapperSummary(attrs) {
+  const total = readXmlAttr(attrs, "tests")
+  const failures = readXmlAttr(attrs, "failures")
+  const errors = readXmlAttr(attrs, "errors")
+  const skipped = readXmlAttr(attrs, "skipped")
+  if (!total.valid || !failures.valid || !errors.valid || !skipped.valid) return true
+  if (total.present && ((failures.value ?? 0) + (errors.value ?? 0) + (skipped.value ?? 0) > total.value)) return true
+  return false
+}
+
 function hasWellFormedJunitEnvelope(trimmed, hasWrapper) {
   if (hasWrapper) {
     return /<testsuites\b[^>]*\/>/i.test(trimmed) || /<\/testsuites>\s*$/i.test(trimmed)
@@ -217,6 +227,7 @@ export function parseTestReport(text, { sourcePath = "report", format } = {}) {
       }
     }
 
+    if (wrapperMatch && hasInvalidWrapperSummary(wrapperMatch[1])) return unknownReport(sourcePath)
     const wrapperCounts = wrapperMatch ? parseJunitCounts(wrapperMatch[1], { requireFailures: true }) : undefined
     if (wrapperMatch && !wrapperCounts && !summed) return unknownReport(sourcePath)
     if (wrapperCounts && summed) {

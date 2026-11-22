@@ -135,6 +135,13 @@ test("multi-suite JUnit and inconsistent/missing attributes never produce false 
 
   const truncatedXml = parseTestReport(`<testsuite name="a" tests="2" failures="0">`)
   assert.equal(truncatedXml.status, "Unknown")
+
+  const malformedWrapperWithValidChild = parseTestReport(`
+    <testsuites tests="abc" failures="0">
+      <testsuite name="a" tests="2" failures="0" errors="0" skipped="0"></testsuite>
+    </testsuites>
+  `)
+  assert.equal(malformedWrapperWithValidChild.status, "Unknown")
 })
 
 test("missing or malformed JSON test reports never become Passed", async (t) => {
