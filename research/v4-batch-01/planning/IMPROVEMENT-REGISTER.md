@@ -43,3 +43,9 @@ Before any later approved plugin change: inspect corresponding package `README.m
 Batch 01 sources: `research/v4-batch-01/results/provider-capabilities.md`, `cost-security-findings.md`, `verification.md`. The logged quota suggestions are qualitative: the batch did not measure actual tokens or costs.
 
 Cross-repo owner of article decisions: AI-skills `research/v4-batch-01/planning/IMPROVEMENT-REGISTER.md`.
+
+## Owner decision — read-only Workflow Dashboard (design approved, not implementation)
+
+The user **expanded** the earlier Test Evidence Viewer preference into a read-only, milestone-based **Workflow Dashboard inside the harness**, with test evidence as a detailed section. The dashboard is **not live AI supervision**: **zero additional model calls is a hard MVP constraint**; read existing host session/assignment events, current working state, and actual test/review artifacts with deterministic local code, without AI polling, extra model-authored reports, new authoritative state files, or a daemon. Display source-grounded last-known statuses and Unknown on missing/stale evidence; no guessed model from default lane. No controls, approvals, or workflow mutations in the MVP.
+
+**Canonical scoped design, feasibility checks, and acceptance criteria:** [WORKFLOW-DASHBOARD-DESIGN.md](WORKFLOW-DASHBOARD-DESIGN.md). The same later independent executor may own workflow refinement and this plugin pilot, subject to separate authorized implementation and reviewer challenge. Start with an actual host/API and evidence-source feasibility audit and one pilot; don't build or install on this research-only decision. Browser tooling: assess existing capability against Playwright MCP/CLI first; static analysis: assess existing guards against ast-grep first. Do not install either during this phase.
