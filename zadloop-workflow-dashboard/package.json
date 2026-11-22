@@ -1,0 +1,14 @@
+{
+  "name": "@local/zadloop-workflow-dashboard",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=20.3.0" },
+  "scripts": {
+    "test": "node --test"
+  },
+  "exports": {
+    "./adapter": "./src/adapter.mjs"
+  },
+  "files": ["src/*.mjs", "test/*.mjs", "README.md"]
+}
