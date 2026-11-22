@@ -1,3 +1,4 @@
+import { constants as fsConstants } from "node:fs"
 import { open, realpath } from "node:fs/promises"
 import { isAbsolute, relative, resolve, sep } from "node:path"
 
@@ -37,7 +38,11 @@ async function readConfinedText(workspaceRoot, targetPath) {
     throw new Error("Evidence path escapes the approved workspace root through a link.")
   }
   // Open once and read through the handle to avoid stat -> readFile TOCTOU races.
-  const handle = await open(realTarget, "r")
+  // On POSIX, O_NOFOLLOW also blocks a final-component symlink swap between realpath and open.
+  const openFlags = process.platform !== "win32" && typeof fsConstants.O_NOFOLLOW === "number"
+    ? fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW
+    : "r"
+  const handle = await open(realTarget, openFlags)
   try {
     const info = await handle.stat()
     if (!info.isFile()) throw new Error("Evidence target is not a regular file.")
@@ -125,22 +130,38 @@ export function parseScratchpad(text, { sourcePath = "scratchpad.md", mtimeMs, n
   }
 }
 
-function readXmlIntAttr(attrs, name) {
-  const match = attrs.match(new RegExp(`\\b${name}=["'](\\d+)["']`, "i"))
-  if (!match) return undefined
+function readXmlAttr(attrs, name) {
+  const present = new RegExp(`\\b${name}\\s*=`, "i").test(attrs)
+  if (!present) return { present: false, valid: true, value: undefined }
+  const match = attrs.match(new RegExp(`\\b${name}\\s*=\\s*["'](\\d+)["']`, "i"))
+  if (!match) return { present: true, valid: false, value: undefined }
   const value = Number.parseInt(match[1], 10)
-  return Number.isSafeInteger(value) && value >= 0 ? value : undefined
+  return Number.isSafeInteger(value) && value >= 0
+    ? { present: true, valid: true, value }
+    : { present: true, valid: false, value: undefined }
 }
 
-function parseJunitCounts(attrs) {
-  const total = readXmlIntAttr(attrs, "tests")
-  if (total === undefined) return undefined
-  const failures = readXmlIntAttr(attrs, "failures") ?? 0
-  const errors = readXmlIntAttr(attrs, "errors") ?? 0
-  const skipped = readXmlIntAttr(attrs, "skipped") ?? 0
-  const failed = failures + errors
-  if (failed + skipped > total) return undefined
-  return { total, passed: total - failed - skipped, failed, skipped }
+function parseJunitCounts(attrs, { requireFailures = true } = {}) {
+  const total = readXmlAttr(attrs, "tests")
+  const failures = readXmlAttr(attrs, "failures")
+  const errors = readXmlAttr(attrs, "errors")
+  const skipped = readXmlAttr(attrs, "skipped")
+  if (!total.present || !total.valid) return undefined
+  if (!failures.valid || !errors.valid || !skipped.valid) return undefined
+  if (requireFailures && !failures.present) return undefined
+  const f = failures.value ?? 0
+  const e = errors.value ?? 0
+  const s = skipped.value ?? 0
+  const failed = f + e
+  if (failed + s > total.value) return undefined
+  return { total: total.value, passed: total.value - failed - s, failures: f, errors: e, failed, skipped: s }
+}
+
+function hasWellFormedJunitEnvelope(trimmed, hasWrapper) {
+  if (hasWrapper) {
+    return /<testsuites\b[^>]*\/>/i.test(trimmed) || /<\/testsuites>\s*$/i.test(trimmed)
+  }
+  return /<testsuite\b[^>]*\/>/i.test(trimmed) || /<\/testsuite>\s*$/i.test(trimmed)
 }
 
 function classifyCounts({ passed, failed, skipped, blocked = 0 }) {
@@ -179,21 +200,24 @@ export function parseTestReport(text, { sourcePath = "report", format } = {}) {
     const wrapperMatch = trimmed.match(/<testsuites\b([^>]*)>/i)
     const suiteMatches = [...trimmed.matchAll(/<testsuite\b([^>]*)>/gi)]
     if (!wrapperMatch && suiteMatches.length === 0) return unknownReport(sourcePath)
+    if (!hasWellFormedJunitEnvelope(trimmed, Boolean(wrapperMatch))) return unknownReport(sourcePath)
 
     let summed
     if (suiteMatches.length > 0) {
-      summed = { total: 0, passed: 0, failed: 0, skipped: 0 }
+      summed = { total: 0, passed: 0, failures: 0, errors: 0, failed: 0, skipped: 0 }
       for (const match of suiteMatches) {
-        const counts = parseJunitCounts(match[1])
+        const counts = parseJunitCounts(match[1], { requireFailures: true })
         if (!counts) return unknownReport(sourcePath)
         summed.total += counts.total
         summed.passed += counts.passed
+        summed.failures += counts.failures
+        summed.errors += counts.errors
         summed.failed += counts.failed
         summed.skipped += counts.skipped
       }
     }
 
-    const wrapperCounts = wrapperMatch ? parseJunitCounts(wrapperMatch[1]) : undefined
+    const wrapperCounts = wrapperMatch ? parseJunitCounts(wrapperMatch[1], { requireFailures: true }) : undefined
     if (wrapperMatch && !wrapperCounts && !summed) return unknownReport(sourcePath)
     if (wrapperCounts && summed) {
       if (
@@ -206,6 +230,14 @@ export function parseTestReport(text, { sourcePath = "report", format } = {}) {
     }
     const finalCounts = summed ?? wrapperCounts
     if (!finalCounts) return unknownReport(sourcePath)
+
+    // Guard against <failure> or <error> child elements contradicting summary counts.
+    const failureTagCount = (trimmed.match(/<failure(?:\s|>|\/)/gi) ?? []).length
+    const errorTagCount = (trimmed.match(/<error(?:\s|>|\/)/gi) ?? []).length
+    if (failureTagCount > finalCounts.failures || errorTagCount > finalCounts.errors) {
+      return unknownReport(sourcePath)
+    }
+
     return {
       sourcePath,
       status: classifyCounts({ ...finalCounts, blocked: 0 }),

@@ -119,6 +119,22 @@ test("multi-suite JUnit and inconsistent/missing attributes never produce false 
 
   const impossibleCounts = parseTestReport(`<testsuite name="a" tests="1" failures="2"></testsuite>`)
   assert.equal(impossibleCounts.status, "Unknown")
+
+  const failureElementWithoutCounts = parseTestReport(
+    `<testsuite name="a" tests="1"><testcase name="x"><failure message="boom"/></testcase></testsuite>`,
+  )
+  assert.equal(failureElementWithoutCounts.status, "Unknown")
+
+  const failureElementContradictingZero = parseTestReport(
+    `<testsuite name="a" tests="1" failures="0" errors="0"><testcase name="x"><failure message="boom"/></testcase></testsuite>`,
+  )
+  assert.equal(failureElementContradictingZero.status, "Unknown")
+
+  const malformedFailuresAttr = parseTestReport(`<testsuite name="a" tests="2" failures="abc"></testsuite>`)
+  assert.equal(malformedFailuresAttr.status, "Unknown")
+
+  const truncatedXml = parseTestReport(`<testsuite name="a" tests="2" failures="0">`)
+  assert.equal(truncatedXml.status, "Unknown")
 })
 
 test("missing or malformed JSON test reports never become Passed", async (t) => {

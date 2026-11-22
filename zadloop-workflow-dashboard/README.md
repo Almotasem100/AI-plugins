@@ -10,8 +10,8 @@
 - **Read-only:** never writes to scratchpads, workflow files, or host state.
 - **Zero additional AI/model calls:** purely deterministic local file/metadata parsing; missing or unparseable evidence renders `Unknown`, never calls a model.
 - **No duplicate workflow state:** reads existing `scratchpad.md`, deterministic test reports (JUnit XML / JSON), and host session metadata only.
-- **Truthful model identity:** reports executed model only when recorded in session/assignment evidence; never infers executed model from a configured default lane.
-- **Workspace confinement:** rejects path traversal or references outside the approved workspace root.
+- **Truthful model identity:** reports executed model only when recorded in authoritative host session events; never infers executed model from a configured default lane. In Stage 2, the host adapter must construct `modelEvidence` directly from live `dsh-session` events rather than accepting caller-supplied labels.
+- **Workspace confinement & limits:** resolves both workspace root and target via `realpath`, rejects lexical traversal and symlink/junction escapes, opens once with `O_NOFOLLOW` on POSIX, and reads through the file handle with a 256 KiB cap. Threat model: prevents accidental traversal, workspace-escaping links, and oversized/non-regular reads under the local developer user account. Residual limit: `realpath`-before-`open` cannot eliminate concurrent same-UID ancestor directory swaps on Windows (where `O_NOFOLLOW` is unavailable) or across parent directories; this is an application-level guard, not an OS sandbox.
 
 ## Verified ZadLoop 0.11.2 host API feasibility
 
