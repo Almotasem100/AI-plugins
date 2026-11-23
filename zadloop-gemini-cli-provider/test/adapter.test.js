@@ -690,5 +690,100 @@ test("wrapped cause WebSocket disconnect is classified and invalid timeoutMs is 
       collect(streamGeminiTask({ subprocess: f.adapter.subprocess, task: "hi", cwd: resolve("fixture-project"), model, timeoutMs: bad })),
       RangeError,
     )
+    await assert.rejects(
+      collect(streamGeminiTask({ subprocess: f.adapter.subprocess, task: "hi", cwd: resolve("fixture-project"), model, idleTimeoutMs: bad })),
+      RangeError,
+    )
   }
+})
+
+test("active tool_use/tool_result progress survives beyond idleTimeoutMs on text and ACP paths", { timeout: 5000 }, async (t) => {
+  const textF = fixture(t, "stream-active-progress")
+  const textChunks = await collect(streamGeminiTask({
+    subprocess: textF.adapter.subprocess,
+    task: "investigate",
+    cwd: resolve("fixture-project"),
+    model,
+    idleTimeoutMs: 260,
+    maxTimeoutMs: 2500,
+  }))
+  assert.deepEqual(textChunks, ["Active run done"])
+
+  const acpF = fixture(t, "acp-active-progress")
+  const acpChunks = await collect(streamGeminiImageTask({
+    subprocess: acpF.adapter.subprocess,
+    task: "describe",
+    images: [{ type: "image", mimeType: "image/png", data: "AQID" }],
+    cwd: resolve("fixture-project"),
+    model,
+    idleTimeoutMs: 260,
+    maxTimeoutMs: 2500,
+  }))
+  assert.deepEqual(acpChunks, ["ACP active done"])
+})
+
+test("stderr noise and fake heartbeat events do not reset idleTimeoutMs on text or ACP paths", { timeout: 5000 }, async (t) => {
+  const textF = fixture(t, "stream-noise-stall")
+  const textIter = streamGeminiTask({
+    subprocess: textF.adapter.subprocess,
+    task: "investigate",
+    cwd: resolve("fixture-project"),
+    model,
+    idleTimeoutMs: 260,
+    maxTimeoutMs: 3000,
+  })[Symbol.asyncIterator]()
+  const firstText = await textIter.next()
+  assert.equal(firstText.value, "First")
+  await assert.rejects(textIter.next(), /stalled with no progress for 260 ms/)
+  assert.notEqual(textF.child.signalCode, null)
+
+  const acpF = fixture(t, "acp-noise-stall")
+  const acpIter = streamGeminiImageTask({
+    subprocess: acpF.adapter.subprocess,
+    task: "describe",
+    images: [{ type: "image", mimeType: "image/png", data: "AQID" }],
+    cwd: resolve("fixture-project"),
+    model,
+    idleTimeoutMs: 260,
+    maxTimeoutMs: 3000,
+  })[Symbol.asyncIterator]()
+  const firstAcp = await acpIter.next()
+  assert.equal(firstAcp.value, "First")
+  await assert.rejects(acpIter.next(), /stalled with no progress for 260 ms/)
+  assert.notEqual(acpF.child.signalCode, null)
+})
+
+test("absolute maxTimeoutMs still bounds continuously active streams and cleans up", { timeout: 5000 }, async (t) => {
+  const f = fixture(t, "stream-active-forever")
+  const iter = streamGeminiTask({
+    subprocess: f.adapter.subprocess,
+    task: "loop",
+    cwd: resolve("fixture-project"),
+    model,
+    idleTimeoutMs: 300,
+    maxTimeoutMs: 550,
+  })[Symbol.asyncIterator]()
+  const first = await iter.next()
+  assert.equal(first.value, "Start")
+  await assert.rejects(iter.next(), /did not finish within 550 ms/)
+  assert.notEqual(f.child.signalCode, null)
+})
+
+test("user cancellation remains immediate during an active long-running stream", { timeout: 5000 }, async (t) => {
+  const f = fixture(t, "stream-active-forever")
+  const controller = new AbortController()
+  const iter = streamGeminiTask({
+    subprocess: f.adapter.subprocess,
+    task: "loop",
+    cwd: resolve("fixture-project"),
+    model,
+    signal: controller.signal,
+    idleTimeoutMs: 2000,
+    maxTimeoutMs: 4000,
+  })[Symbol.asyncIterator]()
+  const first = await iter.next()
+  assert.equal(first.value, "Start")
+  controller.abort()
+  await assert.rejects(iter.next(), { message: "Gemini task was cancelled." })
+  assert.notEqual(f.child.signalCode, null)
 })

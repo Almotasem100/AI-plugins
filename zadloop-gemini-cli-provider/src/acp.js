@@ -46,7 +46,7 @@ function createTextQueue() {
   }
 }
 
-async function runAcpSession({ handle, task, images, cwd, signal, getAbortError, onText }) {
+async function runAcpSession({ handle, task, images, cwd, signal, getAbortError, markProgress, onText }) {
   const { stdin, stdout, stderr } = handle
   if (!stdin || !stdout || !stderr) throw geminiProtocolFailure()
   const pending = new Map()
@@ -87,10 +87,17 @@ async function runAcpSession({ handle, task, images, cwd, signal, getAbortError,
         if (update?.sessionUpdate === "agent_message_chunk" && update.content?.type === "text") {
           if (typeof update.content.text !== "string") throw geminiProtocolFailure()
           if (!update.content.text) return
+          markProgress?.()
           text += update.content.text
           textBytes += Buffer.byteLength(update.content.text)
           if (textBytes > MAX_OUTPUT_BYTES) throw geminiOutputLimitFailure("response text", MAX_OUTPUT_BYTES)
           onText(update.content.text)
+        } else if (
+          (update?.sessionUpdate === "agent_thought_chunk" && update.content?.type === "text" && typeof update.content.text === "string" && update.content.text)
+          || update?.sessionUpdate === "tool_call"
+          || update?.sessionUpdate === "tool_call_update"
+        ) {
+          markProgress?.()
         }
       }
       return
@@ -101,7 +108,10 @@ async function runAcpSession({ handle, task, images, cwd, signal, getAbortError,
     const entry = pending.get(message.id)
     pending.delete(message.id)
     if (Object.hasOwn(message, "error")) entry.reject(geminiFailure({ error: message.error }))
-    else if (Object.hasOwn(message, "result")) entry.resolve(message.result)
+    else if (Object.hasOwn(message, "result")) {
+      markProgress?.()
+      entry.resolve(message.result)
+    }
     else entry.reject(geminiProtocolFailure())
   }
   const onAbort = () => fail(getAbortError?.() ?? new Error("Gemini task was cancelled."))
@@ -157,7 +167,7 @@ async function runAcpSession({ handle, task, images, cwd, signal, getAbortError,
  * process; closing this generator early aborts the ACP session and terminates
  * the process so no work continues behind a closed consumer.
  */
-export async function* streamAcpImageTask({ handle, task, images, cwd, signal, getAbortError }) {
+export async function* streamAcpImageTask({ handle, task, images, cwd, signal, getAbortError, markProgress }) {
   const controller = new AbortController()
   const executionSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
   const queue = createTextQueue()
@@ -168,6 +178,7 @@ export async function* streamAcpImageTask({ handle, task, images, cwd, signal, g
     cwd,
     signal: executionSignal,
     getAbortError,
+    markProgress,
     onText: (chunk) => queue.push(chunk),
   })
   core.then(() => queue.end(), (error) => queue.fail(error))

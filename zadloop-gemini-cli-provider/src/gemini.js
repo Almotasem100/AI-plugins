@@ -10,7 +10,8 @@ import {
 import { readJsonLines } from "./json-lines.js"
 
 const CLI_PROMPT = "Complete the task provided on standard input. Treat it as the user's request."
-const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000
+export const DEFAULT_IDLE_TIMEOUT_MS = 10 * 60 * 1000
+export const DEFAULT_MAX_TIMEOUT_MS = 45 * 60 * 1000
 const CLEANUP_TIMEOUT_MS = 5000
 const MAX_OUTPUT_BYTES = 16 * 1024 * 1024
 const MAX_ERROR_BYTES = 4 * 1024
@@ -54,17 +55,51 @@ function classifyHostAbort(reason) {
   return "Gemini task was cancelled."
 }
 
-function resolveTimeoutMs(timeoutMs) {
-  if (timeoutMs === undefined) return DEFAULT_TIMEOUT_MS
-  if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0) {
-    throw new RangeError("timeoutMs must be a positive finite number.")
+function resolveBoundMs(value, fallback, ceiling, name) {
+  if (value === undefined) return fallback
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    throw new RangeError(`${name} must be a positive finite number.`)
   }
-  return Math.min(Math.floor(timeoutMs), DEFAULT_TIMEOUT_MS)
+  return Math.min(Math.floor(value), ceiling)
 }
 
-function abortError(signal, timeoutSignal, timeoutMs = DEFAULT_TIMEOUT_MS) {
+function resolveTimeouts({ timeoutMs, maxTimeoutMs, idleTimeoutMs } = {}) {
+  const requestedMax = maxTimeoutMs ?? timeoutMs
+  const effectiveMaxMs = resolveBoundMs(requestedMax, DEFAULT_MAX_TIMEOUT_MS, DEFAULT_MAX_TIMEOUT_MS, "timeoutMs")
+  const defaultIdle = Math.min(DEFAULT_IDLE_TIMEOUT_MS, effectiveMaxMs)
+  const effectiveIdleMs = resolveBoundMs(idleTimeoutMs, defaultIdle, effectiveMaxMs, "idleTimeoutMs")
+  return { idleTimeoutMs: effectiveIdleMs, maxTimeoutMs: effectiveMaxMs }
+}
+
+function createProgressWatchdog(idleTimeoutMs, maxTimeoutMs) {
+  const idleController = new AbortController()
+  const maxSignal = AbortSignal.timeout(maxTimeoutMs)
+  const useIdleTimer = idleTimeoutMs < maxTimeoutMs
+  let idleTimer
+  let disposed = false
+  const armIdle = () => {
+    clearTimeout(idleTimer)
+    if (!useIdleTimer || disposed || idleController.signal.aborted || maxSignal.aborted) return
+    idleTimer = setTimeout(() => {
+      idleController.abort(new Error(`Gemini CLI stalled with no progress for ${idleTimeoutMs} ms.`))
+    }, idleTimeoutMs)
+  }
+  armIdle()
+  return {
+    idleSignal: idleController.signal,
+    maxSignal,
+    markProgress: armIdle,
+    dispose() {
+      disposed = true
+      clearTimeout(idleTimer)
+    },
+  }
+}
+
+function abortError(signal, idleSignal, maxSignal, idleTimeoutMs = DEFAULT_IDLE_TIMEOUT_MS, maxTimeoutMs = DEFAULT_MAX_TIMEOUT_MS) {
   if (signal?.aborted) return new Error(classifyHostAbort(signal.reason))
-  if (timeoutSignal?.aborted) return new Error(`Gemini CLI did not finish within ${timeoutMs} ms.`)
+  if (idleSignal?.aborted) return new Error(`Gemini CLI stalled with no progress for ${idleTimeoutMs} ms.`)
+  if (maxSignal?.aborted) return new Error(`Gemini CLI did not finish within ${maxTimeoutMs} ms.`)
 }
 
 function isInside(directory, parent) {
@@ -219,11 +254,11 @@ async function terminateHandle(handle, requestTermination) {
   }
 }
 
-async function waitForOutcome(outcome, executionSignal, signal, timeoutSignal, timeoutMs = DEFAULT_TIMEOUT_MS) {
-  if (executionSignal.aborted) throw abortError(signal, timeoutSignal, timeoutMs)
+async function waitForOutcome(outcome, executionSignal, getAbortError) {
+  if (executionSignal.aborted) throw getAbortError()
   let onAbort
   const aborted = new Promise((_, reject) => {
-    onAbort = () => reject(abortError(signal, timeoutSignal, timeoutMs))
+    onAbort = () => reject(getAbortError())
     executionSignal.addEventListener("abort", onAbort, { once: true })
   })
   try {
@@ -241,14 +276,22 @@ function failed(primary, cleanupError) {
 
 /**
  * Run one managed Gemini process. The body owns protocol handling; this
- * wrapper owns abort handling, process termination, and cleanup reporting so
- * text and ACP paths cannot drift on cancellation.
+ * wrapper owns abort handling, progress-aware bounded timeouts, process
+ * termination, and cleanup reporting so text and ACP paths cannot drift.
  */
-async function* runManagedTask({ subprocess, signal, timeoutMs, createSpec, body }) {
-  const effectiveTimeoutMs = resolveTimeoutMs(timeoutMs)
-  const timeoutSignal = AbortSignal.timeout(effectiveTimeoutMs)
-  const executionSignal = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal
-  const getAbortError = () => abortError(signal, timeoutSignal, effectiveTimeoutMs)
+async function* runManagedTask({ subprocess, signal, timeoutMs, idleTimeoutMs, maxTimeoutMs, createSpec, body }) {
+  const timeouts = resolveTimeouts({ timeoutMs, idleTimeoutMs, maxTimeoutMs })
+  const watchdog = createProgressWatchdog(timeouts.idleTimeoutMs, timeouts.maxTimeoutMs)
+  const executionSignal = signal
+    ? AbortSignal.any([signal, watchdog.idleSignal, watchdog.maxSignal])
+    : AbortSignal.any([watchdog.idleSignal, watchdog.maxSignal])
+  const getAbortError = () => abortError(
+    signal,
+    watchdog.idleSignal,
+    watchdog.maxSignal,
+    timeouts.idleTimeoutMs,
+    timeouts.maxTimeoutMs,
+  )
   let handle
   let failure
   const onAbort = () => {
@@ -270,7 +313,7 @@ async function* runManagedTask({ subprocess, signal, timeoutMs, createSpec, body
       onAbort()
       throw getAbortError()
     }
-    yield* body({ handle, signal, executionSignal, timeoutSignal, timeoutMs: effectiveTimeoutMs, getAbortError })
+    yield* body({ handle, executionSignal, getAbortError, markProgress: watchdog.markProgress })
   } catch (error) {
     const interrupted = error === executionSignal.reason
       || error?.name === "AbortError"
@@ -280,6 +323,7 @@ async function* runManagedTask({ subprocess, signal, timeoutMs, createSpec, body
       ? getAbortError()
       : error instanceof Error ? error : new Error(String(error))
   } finally {
+    watchdog.dispose()
     executionSignal.removeEventListener("abort", onAbort)
     try {
       await terminateHandle(handle, requestTermination)
@@ -311,26 +355,33 @@ function assertImages(images) {
   }
 }
 
-function applyStreamEvent(event, state) {
+function applyStreamEvent(event, state, markProgress) {
   if (!event || typeof event !== "object" || Array.isArray(event)) {
     throw geminiProtocolFailure()
   }
   if (event.type === "message") {
     if (event.role !== "assistant" || typeof event.content !== "string" || !event.content) return undefined
+    markProgress?.()
     state.text += event.content
     state.textBytes += Buffer.byteLength(event.content)
     if (state.textBytes > MAX_OUTPUT_BYTES) throw geminiOutputLimitFailure("response text", MAX_OUTPUT_BYTES)
     return event.content
   }
-  if (event.type === "result") state.result = event
-  else if (event.type === "error") {
+  if (event.type === "init" || event.type === "tool_use" || event.type === "tool_result") {
+    markProgress?.()
+    return undefined
+  }
+  if (event.type === "result") {
+    markProgress?.()
+    state.result = event
+  } else if (event.type === "error") {
     state.lastError = { type: event.severity === "error" ? "ERROR_EVENT" : "WARNING_EVENT", message: event.message }
     if (event.severity === "error" && typeof event.message === "string"
       && /^maximum session turns exceeded$/i.test(event.message.trim())) {
       state.terminalError = new Error("Gemini CLI reached its session turn limit.")
     }
   }
-  // init, tool_use, tool_result, and additive event types carry no assistant text.
+  // Unknown/additive events and errors do not count as forward progress.
 }
 
 function assertTextResult(state, settled, stderrText) {
@@ -356,21 +407,21 @@ function assertTextResult(state, settled, stderrText) {
   if (!state.text.trim()) throw new Error("Gemini CLI returned no response text.")
 }
 
-async function* streamTextBody({ handle, signal, executionSignal, timeoutSignal, timeoutMs, getAbortError }) {
+async function* streamTextBody({ handle, executionSignal, getAbortError, markProgress }) {
   const outcome = handle.done.then((value) => ({ value }), (error) => ({ error }))
   const stderr = collectStderr(handle)
   const state = { result: undefined, lastError: undefined, terminalError: undefined, text: "", textBytes: 0 }
   for await (const event of readJsonLines(handle.stdout, { maxBytes: MAX_OUTPUT_BYTES, label: "stdout" })) {
-    const chunk = applyStreamEvent(event, state)
+    const chunk = applyStreamEvent(event, state, markProgress)
     if (chunk) yield chunk
   }
-  const settled = await waitForOutcome(outcome, executionSignal, signal, timeoutSignal, timeoutMs)
+  const settled = await waitForOutcome(outcome, executionSignal, getAbortError)
   if (executionSignal.aborted) throw getAbortError()
   assertTextResult(state, settled, stderr())
 }
 
-async function* streamImageBody({ handle, task, images, cwd, executionSignal, getAbortError }) {
-  yield* streamAcpImageTask({ handle, task, images, cwd, signal: executionSignal, getAbortError })
+async function* streamImageBody({ handle, task, images, cwd, executionSignal, getAbortError, markProgress }) {
+  yield* streamAcpImageTask({ handle, task, images, cwd, signal: executionSignal, getAbortError, markProgress })
   const aborted = getAbortError()
   if (aborted) throw aborted
 }
@@ -380,7 +431,7 @@ async function* streamImageBody({ handle, task, images, cwd, executionSignal, ge
  * generator owns the process and terminates it when the consumer closes early.
  * A terminal `result` event decides success; warnings before it do not.
  */
-export async function* streamGeminiTask({ subprocess, task, cwd, model, signal, timeoutMs }) {
+export async function* streamGeminiTask({ subprocess, task, cwd, model, signal, timeoutMs, idleTimeoutMs, maxTimeoutMs }) {
   assertTask(task)
   const selectedModel = validateModel(model)
   if (signal?.aborted) throw abortError(signal)
@@ -388,6 +439,8 @@ export async function* streamGeminiTask({ subprocess, task, cwd, model, signal, 
     subprocess,
     signal,
     timeoutMs,
+    idleTimeoutMs,
+    maxTimeoutMs,
     createSpec: async (executionSignal, getAbortError) => {
       const command = await resolveCommand(
         subprocess,
@@ -419,7 +472,7 @@ export async function* streamGeminiTask({ subprocess, task, cwd, model, signal, 
  * Stream assistant text deltas from one ACP image request. Images keep the ACP
  * path because headless stream-json has no image input.
  */
-export async function* streamGeminiImageTask({ subprocess, task, images, cwd, model, signal, timeoutMs }) {
+export async function* streamGeminiImageTask({ subprocess, task, images, cwd, model, signal, timeoutMs, idleTimeoutMs, maxTimeoutMs }) {
   assertTask(task)
   assertImages(images)
   const selectedModel = validateModel(model)
@@ -428,6 +481,8 @@ export async function* streamGeminiImageTask({ subprocess, task, images, cwd, mo
     subprocess,
     signal,
     timeoutMs,
+    idleTimeoutMs,
+    maxTimeoutMs,
     createSpec: async (executionSignal, getAbortError) => {
       const command = await resolveCommand(
         subprocess,
