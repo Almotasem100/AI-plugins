@@ -100,27 +100,42 @@ test("model/selection without assistant/message never fabricates an executed mod
   assert.equal(assignment.modelEvidence, undefined)
 })
 
-test("missing workspace or missing scratchpad returns Unknown with zero model calls", async (t) => {
-  const noWorkspace = await readWorkflowDashboard({
-    sessions: { get: () => undefined },
-    workingDirectory: { get: () => undefined, defaultDirectory: undefined },
-    sessionId: "sess-missing",
-  })
-  assert.equal(noWorkspace.readOnly, true)
-  assert.equal(noWorkspace.additionalModelCalls, 0)
-  assert.equal(noWorkspace.workspaceStatus, "Unavailable")
-  assert.equal(noWorkspace.workItem.taskStatus, "Unknown")
-  assert.equal(noWorkspace.participant.executedModel, "Unknown")
-  assert.equal(noWorkspace.verification.status, "Unknown")
+test("missing, invalid, unknown, or mismatched sessionId fails closed without reading defaultDirectory", async (t) => {
+  const defaultDir = await mkdtemp(join(tmpdir(), "wf-default-"))
+  t.after(() => rm(defaultDir, { recursive: true, force: true }))
+  await writeFile(join(defaultDir, "scratchpad.md"), SCRATCHPAD, "utf8")
+
+  const cases = [
+    { label: "missing sessionId", sessionId: undefined, sessions: { get: () => undefined } },
+    { label: "malformed sessionId", sessionId: "../escape", sessions: { get: () => ({ id: "../escape" }) } },
+    { label: "unknown sessionId", sessionId: "sess-unknown", sessions: { get: () => undefined } },
+    { label: "mismatched session object", sessionId: "sess-a", sessions: { get: () => ({ id: "sess-b", snapshotEvents: () => [] }) } },
+  ]
+
+  for (const c of cases) {
+    const snap = await readWorkflowDashboard({
+      sessions: c.sessions,
+      workingDirectory: { get: () => defaultDir, defaultDirectory: defaultDir },
+      sessionId: c.sessionId,
+    })
+    assert.equal(snap.readOnly, true, c.label)
+    assert.equal(snap.additionalModelCalls, 0, c.label)
+    assert.equal(snap.workspaceStatus, "Unavailable", c.label)
+    assert.equal(snap.workItem.activeItem, "Unknown", c.label)
+    assert.equal(snap.workItem.sourcePath, "Unknown", c.label)
+    assert.equal(snap.participant.executedModel, "Unknown", c.label)
+    assert.equal(snap.verification.status, "Unknown", c.label)
+  }
 
   const emptyDir = await mkdtemp(join(tmpdir(), "wf-empty-"))
   t.after(() => rm(emptyDir, { recursive: true, force: true }))
   const emptySnap = await readWorkflowDashboard({
-    sessions: { get: () => undefined },
-    workingDirectory: { get: () => emptyDir, defaultDirectory: emptyDir },
+    sessions: { get: (id) => (id === "sess-empty" ? { id: "sess-empty", snapshotEvents: () => [] } : undefined) },
+    workingDirectory: { get: () => emptyDir, defaultDirectory: defaultDir },
     sessionId: "sess-empty",
   })
   assert.equal(emptySnap.additionalModelCalls, 0)
+  assert.equal(emptySnap.workspaceStatus, "Resolved")
   assert.equal(emptySnap.workItem.taskStatus, "Unknown")
   assert.equal(emptySnap.verification.status, "Unknown")
 })

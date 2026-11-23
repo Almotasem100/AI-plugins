@@ -76,53 +76,66 @@ export function extractSessionAssignment(session, sessionId) {
   }
 }
 
-export async function readWorkflowDashboard({ sessions, workingDirectory, sessionId, nowMs = Date.now() }) {
-  const normalizedId = typeof sessionId === "string" && sessionId.trim() ? sessionId.trim() : undefined
-  const session = normalizedId ? sessions?.get?.(normalizedId) : undefined
-  const workspaceRoot = session
-    ? workingDirectory?.get?.(session)
-    : workingDirectory?.defaultDirectory
+const SESSION_ID_PATTERN = /^[A-Za-z0-9._:-]{1,128}$/
 
+function unavailableSnapshot(sessionId, nowMs, reason = "Unavailable") {
+  return {
+    readOnly: true,
+    additionalModelCalls: 0,
+    collectedAt: new Date(nowMs).toISOString(),
+    sessionId: sessionId ?? "Unknown",
+    workspaceStatus: reason,
+    workItem: {
+      sourcePath: "Unknown",
+      updatedAt: "Unknown",
+      stale: true,
+      liveActivity: "Unknown",
+      workflowKind: "Unknown",
+      objective: "Unknown",
+      activeItem: "Unknown",
+      stage: "Unknown",
+      stageStatus: "Unknown",
+      hasOpenBlockers: false,
+      taskStatus: "Unknown",
+      reposState: "Unknown",
+      completed: [],
+      decisions: [],
+      blockers: [],
+      verificationNotes: [],
+      nextAction: [],
+    },
+    participant: {
+      participant: "Unknown",
+      configuredLane: "Unknown",
+      executedModel: "Unknown",
+      modelVerified: false,
+      modelEvidenceSource: "Unknown",
+    },
+    verification: {
+      sourcePath: "Unknown",
+      status: "Unknown",
+      counts: { passed: 0, failed: 0, skipped: 0, blocked: 0 },
+      testedRevision: "Unknown",
+    },
+  }
+}
+
+export async function readWorkflowDashboard({ sessions, workingDirectory, sessionId, nowMs = Date.now() }) {
+  const normalizedId = typeof sessionId === "string" ? sessionId.trim() : ""
+  // Fail closed for missing, malformed, unknown, or mismatched session IDs; never fall back to defaultDirectory.
+  if (!normalizedId || !SESSION_ID_PATTERN.test(normalizedId)) {
+    return unavailableSnapshot("Unknown", nowMs, "Unavailable")
+  }
+  const session = sessions?.get?.(normalizedId)
+  if (!session || typeof session !== "object") {
+    return unavailableSnapshot(normalizedId, nowMs, "Unavailable")
+  }
+  if (typeof session.id === "string" && session.id !== normalizedId) {
+    return unavailableSnapshot(normalizedId, nowMs, "Unavailable")
+  }
+  const workspaceRoot = workingDirectory?.get?.(session)
   if (typeof workspaceRoot !== "string" || !workspaceRoot.trim()) {
-    return {
-      readOnly: true,
-      additionalModelCalls: 0,
-      collectedAt: new Date(nowMs).toISOString(),
-      sessionId: normalizedId ?? "Unknown",
-      workspaceStatus: "Unavailable",
-      workItem: {
-        sourcePath: "Unknown",
-        updatedAt: "Unknown",
-        stale: true,
-        liveActivity: "Unknown",
-        workflowKind: "Unknown",
-        objective: "Unknown",
-        activeItem: "Unknown",
-        stage: "Unknown",
-        stageStatus: "Unknown",
-        hasOpenBlockers: false,
-        taskStatus: "Unknown",
-        reposState: "Unknown",
-        completed: [],
-        decisions: [],
-        blockers: [],
-        verificationNotes: [],
-        nextAction: [],
-      },
-      participant: {
-        participant: "Unknown",
-        configuredLane: "Unknown",
-        executedModel: "Unknown",
-        modelVerified: false,
-        modelEvidenceSource: "Unknown",
-      },
-      verification: {
-        sourcePath: "Unknown",
-        status: "Unknown",
-        counts: { passed: 0, failed: 0, skipped: 0, blocked: 0 },
-        testedRevision: "Unknown",
-      },
-    }
+    return unavailableSnapshot(normalizedId, nowMs, "Unavailable")
   }
 
   const [scratchpadPath, testReportPath] = await Promise.all([
@@ -140,7 +153,7 @@ export async function readWorkflowDashboard({ sessions, workingDirectory, sessio
 
   return {
     ...snapshot,
-    sessionId: normalizedId ?? "Unknown",
+    sessionId: normalizedId,
     workspaceStatus: "Resolved",
   }
 }

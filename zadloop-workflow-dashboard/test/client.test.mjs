@@ -232,6 +232,9 @@ test("registers right-sidebar tab, renders verified evidence with zero polling, 
   assert.match(text, /Awaiting ChatGPT review/)
   assert.match(text, /gemini\/gemini-3\.8-flash/)
   assert.match(text, /assistant\/message@sess-1#5/)
+  assert.match(text, /✓ Adapter hardened/)
+  assert.match(text, /● Review — Blocked/)
+  assert.match(text, /○ Next: Address review feedback/)
   assert.match(text, /7 passed/)
 
   app.unmount()
@@ -319,6 +322,19 @@ test("rejects payloads that claim non-zero additionalModelCalls or readOnly !== 
   const app = mountClient(async () => ({
     ok: true,
     json: async () => makeSnapshot({ additionalModelCalls: 1 }),
+  }))
+
+  app.render("sess-1")
+  await new Promise((r) => setImmediate(r))
+  const text = collectText(app.render("sess-1"))
+  assert.match(text, /Could not load workflow evidence/)
+  assert.doesNotMatch(text, /CB-202/)
+})
+
+test("rejects a response whose sessionId does not match the active session", async () => {
+  const app = mountClient(async () => ({
+    ok: true,
+    json: async () => makeSnapshot({ sessionId: "sess-other" }),
   }))
 
   app.render("sess-1")

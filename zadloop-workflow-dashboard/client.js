@@ -68,6 +68,9 @@ window.__ModuleLoader__.load({
       decisions: 'Material decisions',
       verificationNotes: 'Verification notes',
       nextAction: 'Next action',
+      milestones: 'Milestones (from scratchpad)',
+      noMilestones: 'No milestones recorded (Unknown).',
+      noSession: 'No active session selected.',
       none: 'None',
     };
 
@@ -176,6 +179,13 @@ window.__ModuleLoader__.load({
 
       async function loadSnapshot(targetSession, keepPrior) {
         cancelRequest();
+        if (!targetSession) {
+          setSnapshot(null);
+          setStale(false);
+          setError(false);
+          setLoading(false);
+          return;
+        }
         const controller = new AbortController();
         let timer;
         let rejectDeadline;
@@ -192,7 +202,7 @@ window.__ModuleLoader__.load({
         inFlight.current = request;
         setLoading(true);
         if (!keepPrior) setError(false);
-        const query = targetSession ? `?sessionId=${encodeURIComponent(targetSession)}` : '';
+        const query = `?sessionId=${encodeURIComponent(targetSession)}`;
         try {
           const result = await Promise.race([deadline, (async () => {
             const response = await fetch(`/api/workflow-dashboard${query}`, {
@@ -204,7 +214,8 @@ window.__ModuleLoader__.load({
             return response.json();
           })()]);
           const data = sanitizeSnapshot(result);
-          if (!data) throw new Error('Invalid dashboard response');
+          // Reject snapshots that do not belong to the requested active session.
+          if (!data || data.sessionId !== targetSession) throw new Error('Invalid or mismatched dashboard response');
           if (mounted.current && inFlight.current === request && activeSession.current === targetSession) {
             setSnapshot({ data, checkedAt: Date.now() });
             setStale(false);
@@ -255,8 +266,9 @@ window.__ModuleLoader__.load({
           h('span', { className: 'wf-dash-badge' }, t('readOnlyBadge')),
           checkedAt ? h('span', null, `${t('lastChecked')}: `, h('time', { dateTime: checkedAt.toISOString() }, checkedAt.toLocaleString())) : null,
           isStale ? h('span', { className: 'wf-dash-badge wf-dash-badge-stale', role: 'status' }, t('stale')) : null),
-        error && !data ? h('div', { className: 'wf-dash-message', role: 'alert' }, t('failed')) : null,
-        !data && !error && loading ? h('div', { className: 'wf-dash-message', role: 'status' }, t('loadingStatus')) : null,
+        !sessionId ? h('div', { className: 'wf-dash-message', role: 'status' }, t('noSession')) : null,
+        sessionId && error && !data ? h('div', { className: 'wf-dash-message', role: 'alert' }, t('failed')) : null,
+        sessionId && !data && !error && loading ? h('div', { className: 'wf-dash-message', role: 'status' }, t('loadingStatus')) : null,
         data ? h(React.Fragment, null,
           h('div', { className: 'wf-dash-section' },
             h('div', { className: 'wf-dash-section-title' }, t('workItem')),
@@ -267,6 +279,16 @@ window.__ModuleLoader__.load({
             h(Row, { label: t('taskStatus'), value: data.workItem.taskStatus, badgeClass: statusBadgeClass(data.workItem.taskStatus) }),
             h(Row, { label: t('liveActivity'), value: data.workItem.liveActivity }),
             h(Row, { label: t('reposState'), value: data.workItem.reposState })),
+          h('div', { className: 'wf-dash-section' },
+            h('div', { className: 'wf-dash-section-title' }, t('milestones')),
+            (data.workItem.completed.length || data.workItem.stage !== 'Unknown' || data.workItem.nextAction.length)
+              ? h('ul', { className: 'wf-dash-list' },
+                ...data.workItem.completed.map((item, idx) => h('li', { key: `done-${idx}` }, `✓ ${item}`)),
+                data.workItem.stage !== 'Unknown'
+                  ? h('li', { key: 'stage-current' }, `● ${data.workItem.stage} — ${data.workItem.taskStatus}`)
+                  : null,
+                ...data.workItem.nextAction.map((item, idx) => h('li', { key: `next-${idx}` }, `○ Next: ${item}`)))
+              : h('div', { className: 'wf-dash-message' }, t('noMilestones'))),
           h('div', { className: 'wf-dash-section' },
             h('div', { className: 'wf-dash-section-title' }, t('participantSection')),
             h(Row, { label: t('participant'), value: data.participant.participant }),
