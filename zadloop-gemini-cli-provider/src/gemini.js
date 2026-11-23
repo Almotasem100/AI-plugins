@@ -57,10 +57,10 @@ function classifyHostAbort(reason) {
 
 function resolveBoundMs(value, fallback, ceiling, name) {
   if (value === undefined) return fallback
-  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
-    throw new RangeError(`${name} must be a positive finite number.`)
+  if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
+    throw new RangeError(`${name} must be a positive integer.`)
   }
-  return Math.min(Math.floor(value), ceiling)
+  return Math.min(value, ceiling)
 }
 
 function resolveTimeouts({ timeoutMs, maxTimeoutMs, idleTimeoutMs } = {}) {

@@ -685,7 +685,7 @@ test("wrapped cause WebSocket disconnect is classified and invalid timeoutMs is 
   controller.abort(new Error("carrier aborted", { cause: rootCause }))
   await assert.rejects(iterator.next(), /ZadLoop connection closed/)
 
-  for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, 0, -10]) {
+  for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, 0, -10, 0.5, 10.2]) {
     await assert.rejects(
       collect(streamGeminiTask({ subprocess: f.adapter.subprocess, task: "hi", cwd: resolve("fixture-project"), model, timeoutMs: bad })),
       RangeError,

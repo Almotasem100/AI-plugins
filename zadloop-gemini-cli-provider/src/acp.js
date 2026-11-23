@@ -46,6 +46,24 @@ function createTextQueue() {
   }
 }
 
+function nonEmptyString(value) {
+  return typeof value === "string" && value.trim() !== ""
+}
+
+function isMeaningfulToolUpdate(update) {
+  if (!nonEmptyString(update?.toolCallId)) return false
+  if (update.sessionUpdate === "tool_call") {
+    return nonEmptyString(update.title) || nonEmptyString(update.status) || update.rawInput !== undefined
+  }
+  if (update.sessionUpdate === "tool_call_update") {
+    const hasContent = (Array.isArray(update.content) && update.content.length > 0)
+      || nonEmptyString(update.content)
+      || (Boolean(update.content) && typeof update.content === "object" && !Array.isArray(update.content))
+    return nonEmptyString(update.status) || nonEmptyString(update.title) || hasContent || update.rawOutput !== undefined
+  }
+  return false
+}
+
 async function runAcpSession({ handle, task, images, cwd, signal, getAbortError, markProgress, onText }) {
   const { stdin, stdout, stderr } = handle
   if (!stdin || !stdout || !stderr) throw geminiProtocolFailure()
@@ -93,9 +111,8 @@ async function runAcpSession({ handle, task, images, cwd, signal, getAbortError,
           if (textBytes > MAX_OUTPUT_BYTES) throw geminiOutputLimitFailure("response text", MAX_OUTPUT_BYTES)
           onText(update.content.text)
         } else if (
-          (update?.sessionUpdate === "agent_thought_chunk" && update.content?.type === "text" && typeof update.content.text === "string" && update.content.text)
-          || update?.sessionUpdate === "tool_call"
-          || update?.sessionUpdate === "tool_call_update"
+          (update?.sessionUpdate === "agent_thought_chunk" && update.content?.type === "text" && nonEmptyString(update.content.text))
+          || isMeaningfulToolUpdate(update)
         ) {
           markProgress?.()
         }

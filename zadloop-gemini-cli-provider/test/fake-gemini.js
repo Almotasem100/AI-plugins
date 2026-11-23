@@ -168,7 +168,10 @@ async function runAcp() {
     } else if (message.method === "session/prompt" && scenario === "acp-active-progress") {
       for (let i = 0; i < 4; i += 1) {
         await new Promise((r) => setTimeout(r, 90))
-        send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "fixture-session", update: { sessionUpdate: i % 2 === 0 ? "tool_call" : "tool_call_update" } } })
+        const update = i % 2 === 0
+          ? { sessionUpdate: "tool_call", toolCallId: `call-${i}`, title: "read_file", status: "in_progress" }
+          : { sessionUpdate: "tool_call_update", toolCallId: `call-${i - 1}`, status: "completed" }
+        send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "fixture-session", update } })
       }
       send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "fixture-session", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "ACP active done" } } } })
       reply(message.id, { stopReason: "end_turn" })
@@ -177,6 +180,8 @@ async function runAcp() {
       const timer = setInterval(() => {
         process.stderr.write("stderr noise\n")
         send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "fixture-session", update: { sessionUpdate: "heartbeat" } } })
+        send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "fixture-session", update: { sessionUpdate: "tool_call" } } })
+        send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "fixture-session", update: { sessionUpdate: "tool_call_update", toolCallId: "empty-1" } } })
       }, 60)
       await waitForWake()
       clearInterval(timer)
