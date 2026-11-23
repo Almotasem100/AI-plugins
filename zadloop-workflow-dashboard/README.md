@@ -1,33 +1,31 @@
-# ZadLoop Workflow Dashboard — Stage 1 (Feasibility & Read-Only Evidence Adapter)
+# ZadLoop Workflow Dashboard
 
-**Status:** Stage 1 only (host API feasibility + headless deterministic evidence adapter). **Not installable yet** — no ZadLoop bundle/client entry point exists in Stage 1, and **Stage 2 UI remains blocked pending Stage 1 evaluation and owner approval.**
+A read-only, milestone-based collapsible right-sidebar tab for **ZadLoop Desktop (`0.11.2`)**, alongside the existing Browser and Workspace Files sidebars. Displays the active work item, workflow kind, last-known stage/status, verified executed model (only when backed by a genuine `dsh-session` `assistant/message` event), blockers, verification outcomes, and expandable evidence references with **zero additional AI/model calls**.
 
-- **Target harness:** ZadLoop Desktop (`0.11.2` inspected read-only; no live host installation performed).
-- **Install / remove:** Not applicable in Stage 1 (offline Node module only; no external dependencies, credentials, or host permissions required).
+## Design invariants
 
-## Design invariants preserved
-
-- **Read-only:** never writes to scratchpads, workflow files, or host state.
-- **Zero additional AI/model calls:** purely deterministic local file/metadata parsing; missing or unparseable evidence renders `Unknown`, never calls a model.
-- **No duplicate workflow state:** reads existing `scratchpad.md`, deterministic test reports (JUnit XML / JSON), and host session metadata only.
-- **Truthful model identity:** reports executed model only when recorded in authoritative host session events; never infers executed model from a configured default lane. In Stage 2, the host adapter must construct `modelEvidence` directly from live `dsh-session` events rather than accepting caller-supplied labels.
+- **Read-only:** never edits scratchpads, workflow files, or host state, and exposes no control/approval/dispatch actions.
+- **Zero additional AI/model calls:** purely deterministic local file/metadata parsing; missing or unparseable evidence renders `Unknown`.
+- **No polling or background daemon:** fetches `GET /api/workflow-dashboard?sessionId=<id>` only on sidebar open, session switch, or manual Refresh.
+- **No duplicate workflow state:** reads existing `active-work/scratchpad.md` (or `scratchpad.md`) and existing JUnit XML / JSON test reports inside the active session's workspace.
+- **Truthful model identity:** `index.js` inspects `session.snapshotEvents()` for genuine `assistant/message` events (`data.message.source.model` + `seq`). A `model/selection` event populates `configuredLane` only; without an executed `assistant/message`, `executedModel` renders `Unknown`.
 - **Workspace confinement & limits:** resolves both workspace root and target via `realpath`, rejects lexical traversal and symlink/junction escapes, opens once with `O_NOFOLLOW` on POSIX, and reads through the file handle with a 256 KiB cap. Threat model: prevents accidental traversal, workspace-escaping links, and oversized/non-regular reads under the local developer user account. Residual limit: `realpath`-before-`open` cannot eliminate concurrent same-UID ancestor directory swaps on Windows (where `O_NOFOLLOW` is unavailable) or across parent directories; this is an application-level guard, not an OS sandbox.
 
-## Verified ZadLoop 0.11.2 host API feasibility
+## Target harness & compatibility
 
-Inspected read-only from the installed ZadLoop Desktop `0.11.2` runtime (`resources/app.asar.unpacked/runtime/node_modules/@deepseek-ai/`):
+- **Target harness:** ZadLoop Desktop `0.11.2` (runtime APIs verified read-only against installed `0.11.2` packages: `@deepseek-ai/dsh-client-ui-sidebar-right`, `@deepseek-ai/dsh-client-locale`, `@deepseek-ai/dsh-session`, `@deepseek-ai/dsh-working-directory`).
+- **Host integration:** `cordis.patch.yml` injects `[connection, sessions, workingDirectory]` and registers `GET /api/workflow-dashboard` (`cache-control: no-store`).
+- **Client integration:** registers right-sidebar tab `@local/zadloop-workflow-dashboard/panel` (`kind: 'workflow-dashboard'`, `priority: 'extension'`) via `ctx.sidebarRightTabs.register(...)` and `sidebar.right.pane.tab` slot.
+- **Permissions / credentials:** read-only local workspace file reads and in-process `dsh-session` inspection; requires no credentials, tokens, or external network access.
 
-| Capability | Verified package / API | Stage 2 feasibility |
-| --- | --- | --- |
-| **Collapsible right sidebar** | `@deepseek-ai/dsh-client-ui-sidebar-right` (`ctx.sidebarRightTabs.register({ id, kind, priority: 'extension', title, guide })` + `ctx.slots.register({ name: 'sidebar.right.pane.tab', key: id }, Body)`) | **Confirmed supported** — exact same public extension path used by `@deepseek-ai/dsh-client-ui-sidebar-browser` and `@deepseek-ai/dsh-client-ui-sidebar-documentpreview`. |
-| **Active session & workspace path** | `@deepseek-ai/dsh-session` (`ctx.sessions.get(id)`, `ctx.sessions.list()`, `cwd`, `parentSession`, `origin`) + `@deepseek-ai/dsh-working-directory` (`ctx.workingDirectory.get(session)`) | **Confirmed supported** — already used by `zadloop-gemini-cli-provider/src/adapter.js`. |
-| **Session model / subagent events** | `@deepseek-ai/dsh-session` typed events (`assistant/message`, `model/selection`, `delegation/model-choice`, `subagent/model-selection-policy`) | **Partially confirmed** — event types exist in `dsh-session/lib/index.js`; Stage 2 must verify exact runtime payload fields on an authorized nonconfidential test session and fall back to `Unknown` when absent. |
-| **Host-to-client read-only transport** | `ctx.connection.fetch.register({ path: '/api/...', methods: ['GET'] })` | **Confirmed supported** — already proven in `usage-panel/index.js`. |
+## Install / remove (for authorized profile testing only)
 
-## Offline verification
+Install from this package directory in an authorized ZadLoop test profile using the same local-bundle mechanism as `usage-panel` (`dsh.bundle` + `dsh.client`), then reload the profile. Remove by uninstalling `@local/zadloop-workflow-dashboard` from the profile and reloading; disabling or removing disposes the HTTP route, locale dictionary, sidebar tab type, and slot registration.
+
+## Verification
 
 ```sh
 npm --prefix zadloop-workflow-dashboard test
 ```
 
-Runs deterministic offline tests against temporary fixtures (no ZadLoop host, no network, zero model calls).
+Runs offline tests covering the Stage 1 evidence adapter (`test/adapter.test.mjs`), host route & `dsh-session` event extraction (`test/host.test.mjs`), and right-sidebar client lifecycle/session-switching/cleanup (`test/client.test.mjs`). Offline suites do not establish live ZadLoop Desktop rendering or live-session event payloads; an authorized live ZadLoop smoke test remains separate.

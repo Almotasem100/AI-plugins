@@ -1,6 +1,6 @@
 {
   "name": "@local/zadloop-workflow-dashboard",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "engines": { "node": ">=20.3.0" },
@@ -8,7 +8,28 @@
     "test": "node --test"
   },
   "exports": {
-    "./adapter": "./src/adapter.mjs"
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./adapter": "./src/adapter.mjs",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
   },
-  "files": ["src/*.mjs", "test/*.mjs", "README.md"]
+  "files": [
+    "index.js",
+    "client.js",
+    "src/*.mjs",
+    "test/*.mjs",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": ["@deepseek-ai/dsh-client-ui-sidebar-right", "@deepseek-ai/dsh-client-locale"]
+    }
+  }
 }

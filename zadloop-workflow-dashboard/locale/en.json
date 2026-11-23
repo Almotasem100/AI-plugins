@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Workflow Dashboard",
+    "description": "Read-only collapsible right-sidebar tab showing workflow milestones, blockers, verified model evidence, and test outcomes with zero additional AI calls."
+  }
+}
