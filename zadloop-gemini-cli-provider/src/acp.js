@@ -46,7 +46,25 @@ function createTextQueue() {
   }
 }
 
-async function runAcpSession({ handle, task, images, cwd, signal, onText }) {
+function nonEmptyString(value) {
+  return typeof value === "string" && value.trim() !== ""
+}
+
+function isMeaningfulToolUpdate(update) {
+  if (!nonEmptyString(update?.toolCallId)) return false
+  if (update.sessionUpdate === "tool_call") {
+    return nonEmptyString(update.title) || nonEmptyString(update.status) || update.rawInput !== undefined
+  }
+  if (update.sessionUpdate === "tool_call_update") {
+    const hasContent = (Array.isArray(update.content) && update.content.length > 0)
+      || nonEmptyString(update.content)
+      || (Boolean(update.content) && typeof update.content === "object" && !Array.isArray(update.content))
+    return nonEmptyString(update.status) || nonEmptyString(update.title) || hasContent || update.rawOutput !== undefined
+  }
+  return false
+}
+
+async function runAcpSession({ handle, task, images, cwd, signal, getAbortError, markProgress, onText }) {
   const { stdin, stdout, stderr } = handle
   if (!stdin || !stdout || !stderr) throw geminiProtocolFailure()
   const pending = new Map()
@@ -87,10 +105,16 @@ async function runAcpSession({ handle, task, images, cwd, signal, onText }) {
         if (update?.sessionUpdate === "agent_message_chunk" && update.content?.type === "text") {
           if (typeof update.content.text !== "string") throw geminiProtocolFailure()
           if (!update.content.text) return
+          markProgress?.()
           text += update.content.text
           textBytes += Buffer.byteLength(update.content.text)
           if (textBytes > MAX_OUTPUT_BYTES) throw geminiOutputLimitFailure("response text", MAX_OUTPUT_BYTES)
           onText(update.content.text)
+        } else if (
+          (update?.sessionUpdate === "agent_thought_chunk" && update.content?.type === "text" && nonEmptyString(update.content.text))
+          || isMeaningfulToolUpdate(update)
+        ) {
+          markProgress?.()
         }
       }
       return
@@ -101,10 +125,13 @@ async function runAcpSession({ handle, task, images, cwd, signal, onText }) {
     const entry = pending.get(message.id)
     pending.delete(message.id)
     if (Object.hasOwn(message, "error")) entry.reject(geminiFailure({ error: message.error }))
-    else if (Object.hasOwn(message, "result")) entry.resolve(message.result)
+    else if (Object.hasOwn(message, "result")) {
+      markProgress?.()
+      entry.resolve(message.result)
+    }
     else entry.reject(geminiProtocolFailure())
   }
-  const onAbort = () => fail(new Error("Gemini task was cancelled."))
+  const onAbort = () => fail(getAbortError?.() ?? new Error("Gemini task was cancelled."))
   stderr.on("data", (chunk) => {
     const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
     if (stderrBytes < MAX_ERROR_BYTES) stderrText += bytes.subarray(0, MAX_ERROR_BYTES - stderrBytes).toString("utf8")
@@ -157,7 +184,7 @@ async function runAcpSession({ handle, task, images, cwd, signal, onText }) {
  * process; closing this generator early aborts the ACP session and terminates
  * the process so no work continues behind a closed consumer.
  */
-export async function* streamAcpImageTask({ handle, task, images, cwd, signal }) {
+export async function* streamAcpImageTask({ handle, task, images, cwd, signal, getAbortError, markProgress }) {
   const controller = new AbortController()
   const executionSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal
   const queue = createTextQueue()
@@ -167,6 +194,8 @@ export async function* streamAcpImageTask({ handle, task, images, cwd, signal })
     images,
     cwd,
     signal: executionSignal,
+    getAbortError,
+    markProgress,
     onText: (chunk) => queue.push(chunk),
   })
   core.then(() => queue.end(), (error) => queue.fail(error))
