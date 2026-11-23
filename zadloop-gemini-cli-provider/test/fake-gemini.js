@@ -90,6 +90,40 @@ async function runHeadless() {
       streamResult()
       return
     }
+    case "stream-upstream-cancel": {
+      streamMessage("Partial")
+      streamResult("error", { type: "ERROR_EVENT", message: "rpc error: code = Canceled desc = context canceled" })
+      process.exitCode = 1
+      return
+    }
+    case "stream-active-progress": {
+      for (let i = 0; i < 4; i += 1) {
+        await new Promise((r) => setTimeout(r, 90))
+        send({ type: i % 2 === 0 ? "tool_use" : "tool_result", id: `t-${i}` })
+      }
+      streamMessage("Active run done")
+      streamResult()
+      return
+    }
+    case "stream-noise-stall": {
+      streamMessage("First")
+      const timer = setInterval(() => {
+        process.stderr.write("stderr noise\n")
+        send({ type: "heartbeat", ts: Date.now() })
+      }, 60)
+      await waitForWake()
+      clearInterval(timer)
+      return
+    }
+    case "stream-active-forever": {
+      streamMessage("Start")
+      const timer = setInterval(() => {
+        send({ type: "tool_use", id: "loop" })
+      }, 80)
+      await waitForWake()
+      clearInterval(timer)
+      return
+    }
     default:
       throw new Error(`Unknown headless scenario: ${scenario}`)
   }
@@ -131,6 +165,26 @@ async function runAcp() {
       await waitForWake()
       send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "fixture-session", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: " second" } } } })
       reply(message.id, { stopReason: "end_turn" })
+    } else if (message.method === "session/prompt" && scenario === "acp-active-progress") {
+      for (let i = 0; i < 4; i += 1) {
+        await new Promise((r) => setTimeout(r, 90))
+        const update = i % 2 === 0
+          ? { sessionUpdate: "tool_call", toolCallId: `call-${i}`, title: "read_file", status: "in_progress" }
+          : { sessionUpdate: "tool_call_update", toolCallId: `call-${i - 1}`, status: "completed" }
+        send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "fixture-session", update } })
+      }
+      send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "fixture-session", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "ACP active done" } } } })
+      reply(message.id, { stopReason: "end_turn" })
+    } else if (message.method === "session/prompt" && scenario === "acp-noise-stall") {
+      send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "fixture-session", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "First" } } } })
+      const timer = setInterval(() => {
+        process.stderr.write("stderr noise\n")
+        send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "fixture-session", update: { sessionUpdate: "heartbeat" } } })
+        send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "fixture-session", update: { sessionUpdate: "tool_call" } } })
+        send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "fixture-session", update: { sessionUpdate: "tool_call_update", toolCallId: "empty-1" } } })
+      }, 60)
+      await waitForWake()
+      clearInterval(timer)
     } else if (message.method === "session/prompt" && scenario !== "wait") {
       send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "fixture-session", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Fixture " } } } })
       send({ jsonrpc: "2.0", method: "session/update", params: { sessionId: "fixture-session", update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "answer" } } } })

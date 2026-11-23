@@ -33,10 +33,11 @@ export function createGeminiSubagent({ subprocess, name, model }) {
             stopReason: "completed",
           }
         } catch (error) {
-          if (controller.signal.aborted) return { output: [], stopReason: "aborted" }
+          const diagnostic = error instanceof Error ? error.message : String(error)
+          if (controller.signal.aborted) return { output: [], diagnostic, stopReason: "aborted" }
           return {
             output: [],
-            diagnostic: error instanceof Error ? error.message : String(error),
+            diagnostic,
             stopReason: "error",
           }
         } finally {

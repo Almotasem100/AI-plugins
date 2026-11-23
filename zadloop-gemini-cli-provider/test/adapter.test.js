@@ -6,6 +6,7 @@ import { PassThrough, Readable } from "node:stream"
 import { fileURLToPath } from "node:url"
 import test from "node:test"
 import { GeminiCliAdapter } from "../src/adapter.js"
+import { streamGeminiImageTask, streamGeminiTask } from "../src/gemini.js"
 import { readJsonLines } from "../src/json-lines.js"
 
 const fakeGemini = fileURLToPath(new URL("./fake-gemini.js", import.meta.url))
@@ -608,4 +609,181 @@ test("declared peer range keeps supported host versions and accepts rc.2", async
   const pkg = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"))
   const declared = pkg.peerDependencies["@deepseek-ai/dsh-llm"].split("||").map((entry) => entry.trim())
   for (const version of ["0.2.1-rc.2", "0.2.2-rc.1", "0.2.2-rc.2"]) assert.ok(declared.includes(version), version)
+})
+
+test("WebSocket disconnect abort is distinguished from user cancellation and preserves partial output", { timeout: 5000 }, async (t) => {
+  const f = fixture(t, "stream-slow")
+  const controller = new AbortController()
+  const iterator = f.adapter.stream(textOptions(controller.signal))[Symbol.asyncIterator]()
+  const first = await iterator.next()
+  assert.deepEqual(first.value, { type: "text-delta", index: 0, text: "First" })
+  const disconnect = new Error("api gateway: Remote stream WebSocket closed")
+  disconnect.name = "RemoteStreamCarrierError"
+  controller.abort(disconnect)
+  await assert.rejects(iterator.next(), /ZadLoop connection closed/)
+  assert.notEqual(f.child.signalCode, null)
+})
+
+test("host timeout abort is distinguished from user cancellation", { timeout: 5000 }, async (t) => {
+  const f = fixture(t, "stream-slow")
+  const controller = new AbortController()
+  const iterator = f.adapter.stream(textOptions(controller.signal))[Symbol.asyncIterator]()
+  await iterator.next()
+  const hostTimeout = new Error("Request timed out")
+  hostTimeout.name = "TimeoutError"
+  controller.abort(hostTimeout)
+  await assert.rejects(iterator.next(), /timed out in ZadLoop/)
+  assert.notEqual(f.child.signalCode, null)
+})
+
+test("provider bounded timeout reports timeout (not cancellation) on text and ACP paths and cleans up", { timeout: 5000 }, async (t) => {
+  const textF = fixture(t, "stream-slow")
+  const textIter = streamGeminiTask({
+    subprocess: textF.adapter.subprocess,
+    task: "hello",
+    cwd: resolve("fixture-project"),
+    model,
+    timeoutMs: 600,
+  })[Symbol.asyncIterator]()
+  const firstText = await textIter.next()
+  assert.equal(firstText.value, "First")
+  await assert.rejects(textIter.next(), /did not finish within 600 ms/)
+  assert.notEqual(textF.child.signalCode, null)
+
+  const acpF = fixture(t, "slow")
+  const acpIter = streamGeminiImageTask({
+    subprocess: acpF.adapter.subprocess,
+    task: "describe",
+    images: [{ type: "image", mimeType: "image/png", data: "AQID" }],
+    cwd: resolve("fixture-project"),
+    model,
+    timeoutMs: 600,
+  })[Symbol.asyncIterator]()
+  const firstAcp = await acpIter.next()
+  assert.equal(firstAcp.value, "First")
+  await assert.rejects(acpIter.next(), /did not finish within 600 ms/)
+  assert.notEqual(acpF.child.signalCode, null)
+})
+
+test("CLI upstream context cancellation is not misreported as user cancellation", { timeout: 5000 }, async (t) => {
+  const f = fixture(t, "stream-upstream-cancel")
+  const iterator = f.adapter.stream(textOptions(new AbortController().signal))[Symbol.asyncIterator]()
+  const first = await iterator.next()
+  assert.deepEqual(first.value, { type: "text-delta", index: 0, text: "Partial" })
+  const error = await iterator.next().catch((reason) => reason)
+  assert.match(error.message, /upstream request was interrupted or cancelled/i)
+  assert.doesNotMatch(error.message, /^Gemini task was cancelled\.$/)
+})
+
+test("wrapped cause WebSocket disconnect is classified and invalid timeoutMs is rejected", { timeout: 5000 }, async (t) => {
+  const f = fixture(t, "stream-slow")
+  const controller = new AbortController()
+  const iterator = f.adapter.stream(textOptions(controller.signal))[Symbol.asyncIterator]()
+  await iterator.next()
+  const rootCause = new Error("api gateway: Remote stream WebSocket closed")
+  rootCause.name = "RemoteStreamCarrierError"
+  controller.abort(new Error("carrier aborted", { cause: rootCause }))
+  await assert.rejects(iterator.next(), /ZadLoop connection closed/)
+
+  for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, 0, -10, 0.5, 10.2]) {
+    await assert.rejects(
+      collect(streamGeminiTask({ subprocess: f.adapter.subprocess, task: "hi", cwd: resolve("fixture-project"), model, timeoutMs: bad })),
+      RangeError,
+    )
+    await assert.rejects(
+      collect(streamGeminiTask({ subprocess: f.adapter.subprocess, task: "hi", cwd: resolve("fixture-project"), model, idleTimeoutMs: bad })),
+      RangeError,
+    )
+  }
+})
+
+test("active tool_use/tool_result progress survives beyond idleTimeoutMs on text and ACP paths", { timeout: 5000 }, async (t) => {
+  const textF = fixture(t, "stream-active-progress")
+  const textChunks = await collect(streamGeminiTask({
+    subprocess: textF.adapter.subprocess,
+    task: "investigate",
+    cwd: resolve("fixture-project"),
+    model,
+    idleTimeoutMs: 260,
+    maxTimeoutMs: 2500,
+  }))
+  assert.deepEqual(textChunks, ["Active run done"])
+
+  const acpF = fixture(t, "acp-active-progress")
+  const acpChunks = await collect(streamGeminiImageTask({
+    subprocess: acpF.adapter.subprocess,
+    task: "describe",
+    images: [{ type: "image", mimeType: "image/png", data: "AQID" }],
+    cwd: resolve("fixture-project"),
+    model,
+    idleTimeoutMs: 260,
+    maxTimeoutMs: 2500,
+  }))
+  assert.deepEqual(acpChunks, ["ACP active done"])
+})
+
+test("stderr noise and fake heartbeat events do not reset idleTimeoutMs on text or ACP paths", { timeout: 5000 }, async (t) => {
+  const textF = fixture(t, "stream-noise-stall")
+  const textIter = streamGeminiTask({
+    subprocess: textF.adapter.subprocess,
+    task: "investigate",
+    cwd: resolve("fixture-project"),
+    model,
+    idleTimeoutMs: 260,
+    maxTimeoutMs: 3000,
+  })[Symbol.asyncIterator]()
+  const firstText = await textIter.next()
+  assert.equal(firstText.value, "First")
+  await assert.rejects(textIter.next(), /stalled with no progress for 260 ms/)
+  assert.notEqual(textF.child.signalCode, null)
+
+  const acpF = fixture(t, "acp-noise-stall")
+  const acpIter = streamGeminiImageTask({
+    subprocess: acpF.adapter.subprocess,
+    task: "describe",
+    images: [{ type: "image", mimeType: "image/png", data: "AQID" }],
+    cwd: resolve("fixture-project"),
+    model,
+    idleTimeoutMs: 260,
+    maxTimeoutMs: 3000,
+  })[Symbol.asyncIterator]()
+  const firstAcp = await acpIter.next()
+  assert.equal(firstAcp.value, "First")
+  await assert.rejects(acpIter.next(), /stalled with no progress for 260 ms/)
+  assert.notEqual(acpF.child.signalCode, null)
+})
+
+test("absolute maxTimeoutMs still bounds continuously active streams and cleans up", { timeout: 5000 }, async (t) => {
+  const f = fixture(t, "stream-active-forever")
+  const iter = streamGeminiTask({
+    subprocess: f.adapter.subprocess,
+    task: "loop",
+    cwd: resolve("fixture-project"),
+    model,
+    idleTimeoutMs: 300,
+    maxTimeoutMs: 550,
+  })[Symbol.asyncIterator]()
+  const first = await iter.next()
+  assert.equal(first.value, "Start")
+  await assert.rejects(iter.next(), /did not finish within 550 ms/)
+  assert.notEqual(f.child.signalCode, null)
+})
+
+test("user cancellation remains immediate during an active long-running stream", { timeout: 5000 }, async (t) => {
+  const f = fixture(t, "stream-active-forever")
+  const controller = new AbortController()
+  const iter = streamGeminiTask({
+    subprocess: f.adapter.subprocess,
+    task: "loop",
+    cwd: resolve("fixture-project"),
+    model,
+    signal: controller.signal,
+    idleTimeoutMs: 2000,
+    maxTimeoutMs: 4000,
+  })[Symbol.asyncIterator]()
+  const first = await iter.next()
+  assert.equal(first.value, "Start")
+  controller.abort()
+  await assert.rejects(iter.next(), { message: "Gemini task was cancelled." })
+  assert.notEqual(f.child.signalCode, null)
 })
