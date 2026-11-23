@@ -1,0 +1,4 @@
+- insert:
+    - id: workflow-dashboard
+      name: '@local/zadloop-workflow-dashboard'
+      inject: [connection, sessions, workingDirectory]

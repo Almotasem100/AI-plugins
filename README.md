@@ -18,6 +18,7 @@ follow its README for setup and host requirements.
 | [Gemini CLI provider](zadloop-gemini-cli-provider/README.md) | Host | Adds Gemini CLI as a selectable model provider and delegation backend. |
 | [Subscription usage](usage-panel/README.md) | Host + Client | Shows Claude and ChatGPT subscription usage on demand. |
 | [Donald Duck](donald-duck/README.md) | Client | Adds a movable duck overlay. |
+| [Workflow Dashboard](zadloop-workflow-dashboard/README.md) | Host + Client | Read-only collapsible right-sidebar tab for workflow milestones, blockers, and test evidence (0 AI calls). |
 
 ## Development
 
