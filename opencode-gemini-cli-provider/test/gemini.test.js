@@ -5,7 +5,7 @@ import { syncBuiltinESMExports } from "node:module"
 import { basename, delimiter, join } from "node:path"
 import { tmpdir } from "node:os"
 import test from "node:test"
-import { runGeminiImageTask, runGeminiTask, validateModel } from "../src/gemini.js"
+import { isExecutable, runGeminiImageTask, runGeminiTask, validateModel } from "../src/gemini.js"
 import { createGeminiLanguageModel } from "../src/provider.js"
 
 async function createFakeGemini(commandDirectory, cliSource) {
@@ -1174,4 +1174,88 @@ test("cancelling an image request stops the ACP process", async () => {
     restoreEnvironment()
     await rm(readyFile, { force: true })
   }
+})
+
+test("ACP end_turn with no response text fails instead of succeeding empty", async () => {
+  const source = `
+    const readline = require('node:readline')
+    const lines = readline.createInterface({ input: process.stdin })
+    lines.on('line', line => {
+      const message = JSON.parse(line)
+      if (message.method === 'initialize') {
+        process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:message.id,result:{protocolVersion:1,agentCapabilities:{promptCapabilities:{image:true}}}})+'\\n')
+      }
+      if (message.method === 'session/new') {
+        process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:message.id,result:{sessionId:'sess-empty'}})+'\\n')
+      }
+      if (message.method === 'session/prompt') {
+        process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:message.id,result:{stopReason:'end_turn'}})+'\\n')
+      }
+    })`
+  await withFakeGemini(source, ({ projectDirectory }) =>
+    assert.rejects(
+      runGeminiImageTask({ task: "describe", images: [], cwd: projectDirectory }),
+      /returned no response text/,
+    ),
+  )
+})
+
+test("ACP classified provider errors report actionable fixed diagnostics without leaking raw payloads", async () => {
+  const secretToken = "sk-secret-value-12345"
+  const source = `
+    const readline = require('node:readline')
+    const lines = readline.createInterface({ input: process.stdin })
+    lines.on('line', line => {
+      const message = JSON.parse(line)
+      if (message.method === 'initialize') {
+        process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:message.id,result:{protocolVersion:1,agentCapabilities:{promptCapabilities:{image:true}}}})+'\\n')
+      }
+      if (message.method === 'session/new') {
+        process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:message.id,error:{code:429,message:${JSON.stringify(`Too many requests ${secretToken}`)}}})+'\\n')
+      }
+    })`
+  const failure = await withFakeGemini(source, ({ projectDirectory }) =>
+    runGeminiImageTask({ task: "describe", images: [], cwd: projectDirectory }).catch((error) => error),
+  )
+
+  assert.match(failure.message, /quota or rate limit/i)
+  assert.doesNotMatch(failure.message, /sk-secret-value/)
+})
+
+test("isExecutable ignores ENOENT, EACCES, EPERM, and ENOTDIR but rethrows unexpected access errors", async () => {
+  for (const code of ["ENOENT", "EACCES", "EPERM", "ENOTDIR"]) {
+    const allowed = await isExecutable("fake-path", async () => {
+      const err = new Error(`mock ${code}`)
+      err.code = code
+      throw err
+    })
+    assert.equal(allowed, false, code)
+  }
+  await assert.rejects(
+    isExecutable("fake-path", async () => {
+      const err = new Error("mock EIO")
+      err.code = "EIO"
+      throw err
+    }),
+    /mock EIO/,
+  )
+})
+
+test("PATH resolution skips an unusable file entry ahead of the real Gemini CLI", async () => {
+  await withFakeGemini(
+    `process.stdout.write(JSON.stringify({type:'message',role:'assistant',content:'ok',delta:true})+'\\n')
+     process.stdout.write(JSON.stringify({type:'result',status:'success'})+'\\n')`,
+    async ({ projectDirectory }) => {
+      const blockerFile = join(tmpdir(), `opencode-gemini-path-file-${process.pid}-${Date.now()}`)
+      const restoreEnv = setEnvironment({ PATH: `${blockerFile}${process.platform === "win32" ? ";" : ":"}${process.env.PATH}` })
+      try {
+        await writeFile(blockerFile, "not-a-directory")
+        const text = await runGeminiTask({ task: "hello", cwd: projectDirectory })
+        assert.equal(text, "ok")
+      } finally {
+        restoreEnv()
+        await rm(blockerFile, { force: true })
+      }
+    },
+  )
 })
