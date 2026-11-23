@@ -10,26 +10,32 @@ window.__ModuleLoader__.load({
 
     const styles = `
       .wf-dash-root { height: 100%; box-sizing: border-box; overflow-y: auto; padding: 12px 14px; color: var(--dsw-alias-label-primary); background: var(--dsw-alias-bg-base); font-size: 12px; line-height: 1.45; }
-      .wf-dash-header { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--dsw-alias-border-l2); }
+      .wf-dash-header { position: sticky; top: -12px; z-index: 1; margin: -12px -14px 0; padding: 12px 14px 8px; display: flex; justify-content: space-between; align-items: center; gap: 8px; background: var(--dsw-alias-bg-base); border-bottom: 1px solid var(--dsw-alias-border-l2); }
       .wf-dash-title { font-size: 13px; font-weight: 600; }
-      .wf-dash-refresh { color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-layer-1); border: 1px solid var(--dsw-alias-border-l2); border-radius: 6px; padding: 3px 8px; cursor: pointer; font: inherit; }
+      .wf-dash-refresh { flex: none; color: var(--dsw-alias-label-secondary); background: var(--dsw-alias-bg-layer-1); border: 1px solid var(--dsw-alias-border-l2); border-radius: 6px; padding: 3px 8px; cursor: pointer; font: inherit; }
       .wf-dash-refresh:hover:not(:disabled) { background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); }
       .wf-dash-refresh:disabled { opacity: 0.6; cursor: default; }
+      .wf-dash-refresh:focus-visible, .wf-dash-details summary:focus-visible { outline: 2px solid var(--dsw-alias-state-focus-primary, currentColor); outline-offset: 2px; }
       .wf-dash-meta { margin-top: 6px; color: var(--dsw-alias-label-secondary); display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-      .wf-dash-badge { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); }
+      .wf-dash-badge { display: inline-block; max-width: 100%; overflow-wrap: anywhere; text-align: right; padding: 1px 6px; border-radius: 4px; font-size: 11px; font-weight: 600; background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); }
       .wf-dash-badge-blocked, .wf-dash-badge-failed { color: var(--dsw-alias-state-error-primary, #e5534b); }
       .wf-dash-badge-stale { color: var(--dsw-alias-state-warning-primary, #d29922); }
       .wf-dash-badge-passed, .wf-dash-badge-completed { color: var(--dsw-alias-state-success-primary, #3fb950); }
       .wf-dash-section { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--dsw-alias-border-l3, var(--dsw-alias-border-l2)); }
       .wf-dash-section-title { font-weight: 600; margin-bottom: 4px; color: var(--dsw-alias-label-primary); }
-      .wf-dash-row { display: flex; justify-content: space-between; gap: 8px; margin-top: 3px; }
+      .wf-dash-primary { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; margin-bottom: 4px; }
+      .wf-dash-history .wf-dash-section-title { color: var(--dsw-alias-label-secondary); }
+      .wf-dash-row { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 8px; margin-top: 3px; }
       .wf-dash-label { color: var(--dsw-alias-label-secondary); flex: none; }
-      .wf-dash-value { text-align: right; overflow-wrap: anywhere; }
+      .wf-dash-value { flex: 1 1 auto; min-width: 0; text-align: right; overflow-wrap: anywhere; }
+      .wf-dash-mono { font-family: var(--dsw-font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace); font-size: 11px; }
+      .wf-dash-list.wf-dash-milestones { list-style: none; padding-left: 0; }
       .wf-dash-list { margin: 4px 0 0; padding-left: 16px; }
       .wf-dash-list li { margin-top: 2px; overflow-wrap: anywhere; }
       .wf-dash-details { margin-top: 8px; }
       .wf-dash-details summary { cursor: pointer; font-weight: 600; color: var(--dsw-alias-label-secondary); }
       .wf-dash-message { margin-top: 10px; color: var(--dsw-alias-label-secondary); }
+      .wf-dash-message[role="alert"] { color: var(--dsw-alias-state-error-primary, #e5534b); }
     `;
 
     const messages = {
@@ -145,12 +151,12 @@ window.__ModuleLoader__.load({
       return 'wf-dash-badge';
     }
 
-    function Row({ label, value, badgeClass }) {
+    function Row({ label, value, badgeClass, mono }) {
       return h('div', { className: 'wf-dash-row' },
         h('span', { className: 'wf-dash-label' }, label),
         badgeClass
           ? h('span', { className: badgeClass }, value)
-          : h('span', { className: 'wf-dash-value' }, value));
+          : h('span', { className: mono ? 'wf-dash-value wf-dash-mono' : 'wf-dash-value' }, value));
     }
 
     function DetailList({ title, items }) {
@@ -272,7 +278,7 @@ window.__ModuleLoader__.load({
         data ? h(React.Fragment, null,
           h('div', { className: 'wf-dash-section' },
             h('div', { className: 'wf-dash-section-title' }, t('workItem')),
-            h(Row, { label: t('workItem'), value: data.workItem.activeItem }),
+            h('div', { className: 'wf-dash-primary' }, data.workItem.activeItem),
             h(Row, { label: t('workflowKind'), value: data.workItem.workflowKind }),
             h(Row, { label: t('objective'), value: data.workItem.objective }),
             h(Row, { label: t('stage'), value: `${data.workItem.stage} (${data.workItem.stageStatus})` }),
@@ -282,21 +288,13 @@ window.__ModuleLoader__.load({
           h('div', { className: 'wf-dash-section' },
             h('div', { className: 'wf-dash-section-title' }, t('milestones')),
             (data.workItem.completed.length || data.workItem.stage !== 'Unknown' || data.workItem.nextAction.length)
-              ? h('ul', { className: 'wf-dash-list' },
+              ? h('ul', { className: 'wf-dash-list wf-dash-milestones' },
                 ...data.workItem.completed.map((item, idx) => h('li', { key: `done-${idx}` }, `✓ ${item}`)),
                 data.workItem.stage !== 'Unknown'
                   ? h('li', { key: 'stage-current' }, `● ${data.workItem.stage} — ${data.workItem.taskStatus}`)
                   : null,
                 ...data.workItem.nextAction.map((item, idx) => h('li', { key: `next-${idx}` }, `○ Next: ${item}`)))
               : h('div', { className: 'wf-dash-message' }, t('noMilestones'))),
-          h('div', { className: 'wf-dash-section' },
-            h('div', { className: 'wf-dash-section-title' }, t('participantSection')),
-            h(Row, { label: t('participant'), value: data.participant.participant }),
-            h(Row, { label: t('configuredLane'), value: data.participant.configuredLane }),
-            h(Row, { label: t('executedModel'), value: data.participant.executedModel }),
-            data.participant.modelVerified
-              ? h(Row, { label: t('modelSource'), value: data.participant.modelEvidenceSource })
-              : null),
           h('div', { className: 'wf-dash-section' },
             h('div', { className: 'wf-dash-section-title' }, t('blockers')),
             data.workItem.blockers.length
@@ -306,12 +304,20 @@ window.__ModuleLoader__.load({
             h('div', { className: 'wf-dash-section-title' }, t('verification')),
             h(Row, { label: t('taskStatus'), value: data.verification.status, badgeClass: statusBadgeClass(data.verification.status) }),
             h(Row, { label: t('counts'), value: `${data.verification.counts.passed} passed · ${data.verification.counts.failed} failed · ${data.verification.counts.skipped} skipped · ${data.verification.counts.blocked} blocked` }),
-            h(Row, { label: t('testedRevision'), value: data.verification.testedRevision })),
+            h(Row, { label: t('testedRevision'), value: data.verification.testedRevision, mono: true })),
           h('div', { className: 'wf-dash-section' },
+            h('div', { className: 'wf-dash-section-title' }, t('participantSection')),
+            h(Row, { label: t('participant'), value: data.participant.participant }),
+            h(Row, { label: t('configuredLane'), value: data.participant.configuredLane }),
+            h(Row, { label: t('executedModel'), value: data.participant.executedModel }),
+            data.participant.modelVerified
+              ? h(Row, { label: t('modelSource'), value: data.participant.modelEvidenceSource })
+              : null),
+          h('div', { className: 'wf-dash-section wf-dash-history' },
             h('div', { className: 'wf-dash-section-title' }, t('sources')),
-            h(Row, { label: t('scratchpadSource'), value: data.workItem.sourcePath }),
+            h(Row, { label: t('scratchpadSource'), value: data.workItem.sourcePath, mono: true }),
             h(Row, { label: t('scratchpadUpdated'), value: data.workItem.updatedAt }),
-            h(Row, { label: t('reportSource'), value: data.verification.sourcePath }),
+            h(Row, { label: t('reportSource'), value: data.verification.sourcePath, mono: true }),
             h(DetailList, { title: t('completedItems'), items: data.workItem.completed }),
             h(DetailList, { title: t('decisions'), items: data.workItem.decisions }),
             h(DetailList, { title: t('verificationNotes'), items: data.workItem.verificationNotes }),
