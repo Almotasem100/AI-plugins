@@ -15,7 +15,8 @@ window.__ModuleLoader__.load({
       .usage-panel-line { display: flex; justify-content: space-between; gap: 12px; }
       .usage-panel-bar { height: 5px; margin-top: 5px; overflow: hidden; border-radius: 5px; background: var(--dsw-alias-bg-layer-2); }
       .usage-panel-bar > span { display: block; height: 100%; background: var(--dsw-alias-label-secondary); }
-      .usage-panel-reset, .usage-panel-message { margin-top: 4px; color: var(--dsw-alias-label-secondary); }
+      .usage-panel-reset, .usage-panel-message, .usage-panel-checked { margin-top: 4px; color: var(--dsw-alias-label-secondary); }
+      .usage-panel-stale { margin-left: 6px; font-weight: 600; }
     `;
     const messages = {
       title: 'Subscription usage', refresh: 'Refresh', loading: 'Loading…',
@@ -23,10 +24,45 @@ window.__ModuleLoader__.load({
       fiveHour: '5-hour', weekly: 'Weekly', unavailable: 'Usage is unavailable. Try again.',
       windowUnavailable: 'unavailable', resets: 'Resets', resetUnavailable: 'Reset time unavailable',
       notSignedIn: 'Not signed in.', tokenExpired: 'Session expired. Use the model once or sign in again.',
-      unexpected: 'Usage response was not recognized.',
+      unexpected: 'Usage response was not recognized.', lastChecked: 'Last checked', stale: 'Stale',
+    };
+    const statusMessages = {
+      'not-signed-in': 'notSignedIn', 'token-expired': 'tokenExpired',
+      'unexpected-format': 'unexpected', unavailable: 'unavailable',
     };
     let t;
     let locale;
+
+    // Accept only the window shape the server produces: a finite percent and an
+    // ISO reset time (or null). Everything else makes the snapshot invalid.
+    function validWindow(value) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+      if (typeof value.percent !== 'number' || !Number.isFinite(value.percent) || value.percent < 0 || value.percent > 100) return false;
+      return value.resetsAt === null || (typeof value.resetsAt === 'string' && Number.isFinite(Date.parse(value.resetsAt)));
+    }
+
+    // Drop unknown fields so diagnostics can never reach the rendered output.
+    function sanitizeProvider(value) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+      if (value.status === 'ok') {
+        if (!validWindow(value.fiveHour) || !validWindow(value.weekly)) return null;
+        return {
+          status: 'ok',
+          fiveHour: { percent: value.fiveHour.percent, resetsAt: value.fiveHour.resetsAt },
+          weekly: { percent: value.weekly.percent, resetsAt: value.weekly.resetsAt },
+        };
+      }
+      return typeof value.status === 'string' && Object.hasOwn(statusMessages, value.status)
+        ? { status: value.status }
+        : null;
+    }
+
+    function sanitizeSnapshot(value) {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+      const claude = sanitizeProvider(value.claude);
+      const chatgpt = sanitizeProvider(value.chatgpt);
+      return claude && chatgpt ? { claude, chatgpt } : null;
+    }
 
     function WindowUsage({ label, value }) {
       if (!value || !Number.isFinite(value.percent)) {
@@ -46,14 +82,15 @@ window.__ModuleLoader__.load({
         h('strong', null, name),
         data && data.status === 'ok'
           ? h(React.Fragment, null, h(WindowUsage, { label: t('fiveHour'), value: data.fiveHour }), h(WindowUsage, { label: t('weekly'), value: data.weekly }))
-          : h('div', { className: 'usage-panel-message' }, t(({ 'not-signed-in': 'notSignedIn', 'token-expired': 'tokenExpired', 'unexpected-format': 'unexpected' })[data && data.status] || 'unavailable')));
+          : h('div', { className: 'usage-panel-message' }, t(statusMessages[data && data.status] || 'unavailable')));
     }
 
     function UsagePanel() {
       React.useSyncExternalStore(locale.subscribe, locale.getSnapshot);
       const [open, setOpen] = React.useState(false);
       const [loading, setLoading] = React.useState(false);
-      const [data, setData] = React.useState(null);
+      const [snapshot, setSnapshot] = React.useState(null);
+      const [stale, setStale] = React.useState(false);
       const [error, setError] = React.useState(false);
       const [position, setPosition] = React.useState({ top: 8, left: 8 });
       const trigger = React.useRef(null);
@@ -66,8 +103,15 @@ window.__ModuleLoader__.load({
         inFlight.current = null;
         if (request) request.cancel();
       }
+      function clearSnapshot() {
+        setSnapshot(null);
+        setStale(false);
+        setError(false);
+        setLoading(false);
+      }
       function closePanel() {
         cancelUsage();
+        clearSnapshot();
         setOpen(false);
       }
       React.useEffect(() => {
@@ -105,7 +149,7 @@ window.__ModuleLoader__.load({
           window.removeEventListener('resize', place);
           window.removeEventListener('scroll', place, true);
         };
-      }, [open, loading, data, error]);
+      }, [open, loading, snapshot, stale, error]);
 
       async function refresh() {
         if (inFlight.current) return;
@@ -123,18 +167,26 @@ window.__ModuleLoader__.load({
         const request = { cancel };
         inFlight.current = request;
         setLoading(true);
-        setError(false);
-        setData(null);
+        if (!snapshot) setError(false);
         try {
           const result = await Promise.race([deadline, (async () => {
             const response = await fetch('/api/usage-panel', { credentials: 'same-origin', cache: 'no-store', signal: controller.signal });
             if (controller.signal.aborted || !response.ok) throw new Error('Usage unavailable');
             return response.json();
           })()]);
-          if (!result || typeof result !== 'object' || Array.isArray(result)) throw new Error('Invalid response');
-          if (mounted.current && inFlight.current === request) setData(result);
+          const data = sanitizeSnapshot(result);
+          if (!data) throw new Error('Invalid response');
+          if (mounted.current && inFlight.current === request) {
+            setSnapshot({ data, checkedAt: Date.now() });
+            setStale(false);
+            setError(false);
+          }
         } catch (_) {
-          if (mounted.current && inFlight.current === request) { setData(null); setError(true); }
+          // Keep the previous result for this open popup; a first load has none.
+          if (mounted.current && inFlight.current === request) {
+            if (snapshot) setStale(true);
+            else setError(true);
+          }
         } finally {
           clearTimeout(timer);
           if (inFlight.current === request) {
@@ -147,14 +199,23 @@ window.__ModuleLoader__.load({
         if (open) closePanel();
         else { refresh(); setOpen(true); }
       }
+      const checkedAt = snapshot ? new Date(snapshot.checkedAt) : null;
       return h(React.Fragment, null,
         h('style', null, styles),
         h('button', { ref: trigger, type: 'button', className: 'usage-panel-trigger', onClick: toggle, title: t('title'), 'aria-label': t('title'), 'aria-haspopup': 'dialog', 'aria-expanded': open },
           h('svg', { width: 16, height: 16, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 1.8, 'aria-hidden': true }, h('path', { d: 'M4 19V11m5 8V5m5 14v-6m5 6V8' }))),
         open && createPortal(h('div', { ref: popover, className: 'usage-panel-popover', role: 'dialog', tabIndex: -1, 'aria-label': t('title'), style: position },
           h('div', { className: 'usage-panel-heading' }, h('span', null, t('title')), h('button', { type: 'button', className: 'usage-panel-refresh', onClick: refresh, disabled: loading }, loading ? t('loading') : t('refresh'))),
-          error ? h('div', { className: 'usage-panel-message', role: 'alert' }, t('failed')) : null,
-          data ? h(React.Fragment, null, h(Provider, { name: 'Claude', data: data.claude }), h(Provider, { name: 'ChatGPT', data: data.chatgpt })) : (!error && loading ? h('div', { className: 'usage-panel-message', role: 'status' }, t('loadingUsage')) : null)
+          error && !snapshot ? h('div', { className: 'usage-panel-message', role: 'alert' }, t('failed')) : null,
+          snapshot
+            ? h(React.Fragment, null,
+              h('div', { className: 'usage-panel-checked' },
+                h('span', null, t('lastChecked') + ' '),
+                h('time', { dateTime: checkedAt.toISOString() }, checkedAt.toLocaleString()),
+                stale ? h('span', { className: 'usage-panel-stale', role: 'status' }, t('stale')) : null),
+              h(Provider, { name: 'Claude', data: snapshot.data.claude }),
+              h(Provider, { name: 'ChatGPT', data: snapshot.data.chatgpt }))
+            : (!error && loading ? h('div', { className: 'usage-panel-message', role: 'status' }, t('loadingUsage')) : null)
         ), document.body));
     }
 
